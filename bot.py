@@ -131,9 +131,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines = [f"{i}. {item}" for i, item in enumerate(items, 1)]
         list_text = "\n".join(lines)
         sent = await msg.reply_text(
-            f"📋 *어제 루틴에서 선택* (번호 입력 예: 1,3) 또는 새로 적어주세요.\n\n"
+            f"📋 *어제 루틴에서 선택*\n\n"
             f"{list_text}\n\n"
-            f"👇 *이 메시지에 답장*으로 번호 또는 새 루틴을 적어주세요.",
+            f"기존 건 번호를 *쉼표(,)*로 구분해서 쓰고, 새로 추가할 게 있으면 쉼표 뒤에 적어주세요.\n"
+            f"예: 1,3,요가 10분\n\n"
+            f"👇 *이 메시지에 답장*으로 보내주세요.",
             parse_mode="Markdown",
         )
         await db.save_selection_prompt(
@@ -164,48 +166,69 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─────────────────────────────────────────
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # 안내 + 바로 오늘 루틴 입력 유도
     await update.message.reply_text(
         "👋 루틴 봇에 오신 걸 환영합니다!\n\n"
         "📌 사용법\n"
         "• 매일 아침 8시 알람 → 답장으로 오늘 루틴 작성\n"
         "• 매일 저녁 9시 알람 → 아직 못 쓴 사람을 위한 리마인드 알림\n\n"
-        "아래 메시지에 오늘의 루틴을 바로 적어보세요. 😊\n\n"
-        "나중에 추가로 적고 싶으면 /add 를 입력하세요.",
+        "오늘 루틴을 추가하려면 /add 를 입력해서 시작하세요. 😊",
     )
 
-    # 오늘 루틴을 바로 받을 프롬프트 메시지 전송
+
+async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """오늘 루틴 추가: 어제 루틴이 있으면 바로 선택지, 없으면 일반 프롬프트"""
     chat = update.effective_chat
-    if chat:
-        today_label = datetime.datetime.now(KST).strftime("%m/%d")
+    user = update.message.from_user
+    if not chat or not user:
+        return
+
+    today_label = datetime.datetime.now(KST).strftime("%m/%d")
+    yesterday = (datetime.datetime.now(KST) - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+
+    yesterday_routines = await db.get_user_routines(user.id, yesterday)
+    seen_keys = set()
+    items = []
+    for row in yesterday_routines:
+        c = (row.get("content") or "").strip()
+        key = "".join(c.split()).lower()
+        if key and key not in seen_keys:
+            seen_keys.add(key)
+            items.append(c)
+
+    if items:
+        lines = [f"{i}. {item}" for i, item in enumerate(items, 1)]
+        list_text = "\n".join(lines)
         msg = await context.bot.send_message(
             chat_id=chat.id,
             text=(
-                f"📝 *오늘 루틴을 작성해보세요!*\n\n"
-                f"*{today_label}* 오늘 하루에 실천하고 싶은/실천한 루틴을 자유롭게 적어주세요.\n\n"
+                f"📝 *오늘 루틴 추가* ({today_label})\n\n"
+                f"어제 루틴:\n{list_text}\n\n"
+                f"기존 건 번호를 *쉼표(,)*로 구분해서 쓰고, 새로 추가할 게 있으면 쉼표 뒤에 적어주세요.\n"
+                f"예: 1,3,요가 10분\n\n"
+                f"👇 *이 메시지에 답장*으로 보내주세요."
+            ),
+            parse_mode="Markdown",
+        )
+        await db.save_selection_prompt(
+            message_id=msg.message_id,
+            user_id=user.id,
+            chat_id=chat.id,
+            selection_date=yesterday,
+            items_json=json.dumps(items, ensure_ascii=False),
+            prompt_type="morning",
+        )
+        logger.info(f"Add: selection prompt sent | user={user.id}, items={len(items)}")
+    else:
+        msg = await context.bot.send_message(
+            chat_id=chat.id,
+            text=(
+                f"📝 *오늘 루틴을 추가해주세요!*\n\n"
+                f"*{today_label}* 추가로 실천하고 싶은/실천한 루틴을 적어주세요.\n\n"
                 f"👇 *이 메시지에 답장*으로 적어주시면 기록됩니다."
             ),
             parse_mode="Markdown",
         )
         await db.save_prompt_message(msg.message_id, "morning", today_label)
-
-
-async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """오늘 루틴 추가: /start 이후에 다시 루틴 작성 프롬프트를 띄움"""
-    chat = update.effective_chat
-    if not chat:
-        return
-    today_label = datetime.datetime.now(KST).strftime("%m/%d")
-    msg = await context.bot.send_message(
-        chat_id=chat.id,
-        text=(
-            f"📝 *오늘 루틴을 추가해주세요!*\n\n"
-            f"*{today_label}* 추가로 실천하고 싶은/실천한 루틴을 적어주세요.\n\n"
-            f"👇 *이 메시지에 답장*으로 적어주시면 기록됩니다."
-        ),
-        parse_mode="Markdown",
-    )
-    await db.save_prompt_message(msg.message_id, "morning", today_label)
 
 
 async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
