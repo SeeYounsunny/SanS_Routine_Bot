@@ -2,7 +2,8 @@ import os
 import anthropic
 from collections import defaultdict
 
-# 모델 이름을 환경변수로도 바꿀 수 있게 함 (없으면 기본값 사용)
+# 모델 이름. Railway에 ANTHROPIC_MODEL 있으면 그값 사용, 없으면 아래 기본값 사용.
+# 404 나오면: Railway에서 ANTHROPIC_MODEL 변수를 삭제하거나, Anthropic 콘솔에서 사용 가능한 모델 ID로 설정.
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-3-sonnet-20240229")
 client = anthropic.AsyncAnthropic()
 
