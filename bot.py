@@ -33,9 +33,9 @@ async def send_morning_alarm(context: ContextTypes.DEFAULT_TYPE):
     msg = await context.bot.send_message(
         chat_id=chat_id,
         text=(
-            f"🌅 *모닝 루틴 타임!*\n\n"
-            f"*{today}* 오늘 하루의 루틴을 시작해보아요! 💪\n\n"
-            f"👇 *이 메시지에 답장*으로 오늘 할 일들을 자유롭게 적어주세요."
+            f"🌅 *오늘 루틴을 적어볼까요?*\n\n"
+            f"*{today}* 오늘 하루에 실천하고 싶은/실천한 루틴을 자유롭게 적어주세요. 💪\n\n"
+            f"👇 *이 메시지에 답장*으로 오늘 루틴을 적어주세요."
         ),
         parse_mode="Markdown",
     )
@@ -50,9 +50,9 @@ async def send_evening_alarm(context: ContextTypes.DEFAULT_TYPE):
     msg = await context.bot.send_message(
         chat_id=chat_id,
         text=(
-            f"🌙 *저녁 회고 타임!*\n\n"
-            f"*{today}* 오늘 하루를 돌아보아요 ✨\n\n"
-            f"👇 *이 메시지에 답장*으로 완료한 일들과 오늘의 소감을 적어주세요."
+            f"🌙 *오늘 루틴, 마무리해볼까요?*\n\n"
+            f"*{today}* 아직 오늘 루틴을 적지 않았다면 지금 적어주세요. ✨\n\n"
+            f"👇 *이 메시지에 답장*으로 오늘 실천한 루틴을 적어주세요."
         ),
         parse_mode="Markdown",
     )
@@ -65,7 +65,7 @@ async def send_evening_alarm(context: ContextTypes.DEFAULT_TYPE):
 # ─────────────────────────────────────────
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """알람 메시지에 답장하면 루틴으로 저장"""
+    """알림/시작 메시지에 답장하면 루틴으로 저장"""
     msg = update.message
     if not msg or not msg.reply_to_message:
         return
@@ -88,8 +88,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         content=msg.text or "",
     )
 
-    type_label = "아침 계획" if prompt_type == "morning" else "저녁 회고"
-    await msg.reply_text(f"✅ *{name}*님의 {type_label}이 기록됐어요!", parse_mode="Markdown")
+    await msg.reply_text(f"✅ *{name}*님의 오늘 루틴이 기록됐어요!", parse_mode="Markdown")
     logger.info(f"Routine saved | user={name}, type={prompt_type}")
 
 
@@ -98,20 +97,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─────────────────────────────────────────
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # 안내 메시지
+    # 안내 + 바로 오늘 루틴 입력 유도
     await update.message.reply_text(
         "👋 루틴 봇에 오신 걸 환영합니다!\n\n"
         "📌 사용법\n"
         "• 매일 아침 8시 알람 → 답장으로 오늘 루틴 작성\n"
-        "• 매일 저녁 9시 알람 → 답장으로 하루 회고 작성\n\n"
-        "📎 명령어 (영어로 입력)\n"
-        "/summary — 오늘 전체 루틴 AI 요약 보기\n"
-        "/myroutine — 나의 오늘 루틴 확인\n"
-        "/testmorning — 아침 알람 즉시 테스트\n"
-        "/testevening — 저녁 알람 즉시 테스트",
+        "• 매일 저녁 9시 알람 → 아직 못 쓴 사람을 위한 리마인드 알림\n\n"
+        "아래 메시지에 오늘의 루틴을 바로 적어보세요. 😊",
     )
 
-    # chatid는 별도 /chatid 명령으로만 확인 가능하게 유지
+    # 오늘 루틴을 바로 받을 프롬프트 메시지 전송
+    chat = update.effective_chat
+    if chat:
+        today_label = datetime.datetime.now(KST).strftime("%m/%d")
+        msg = await context.bot.send_message(
+            chat_id=chat.id,
+            text=(
+                f"📝 *오늘 루틴을 작성해보세요!*\n\n"
+                f"*{today_label}* 오늘 하루에 실천하고 싶은/실천한 루틴을 자유롭게 적어주세요.\n\n"
+                f"👇 *이 메시지에 답장*으로 적어주시면 기록됩니다."
+            ),
+            parse_mode="Markdown",
+        )
+        await db.save_prompt_message(msg.message_id, "morning", today_label)
 
 
 async def chatid_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -221,23 +229,13 @@ async def my_routine_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     today_label = datetime.datetime.now(KST).strftime("%m/%d")
-    text = f"📋 *{user.full_name}님의 {today_label} 루틴*\n\n"
+    text = f"📋 *{user.full_name}님의 {today_label} 루틴 기록*\n\n"
     for r in routines:
         emoji = "🌅" if r["routine_type"] == "morning" else "🌙"
-        label = "아침 계획" if r["routine_type"] == "morning" else "저녁 회고"
+        label = "오전 기록" if r["routine_type"] == "morning" else "저녁 기록"
         text += f"{emoji} *{label}*\n{r['content']}\n\n"
 
     await update.message.reply_text(text.strip(), parse_mode="Markdown")
-
-
-async def test_morning(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """개발/테스트용: 아침 알람 즉시 실행"""
-    await send_morning_alarm(context)
-
-
-async def test_evening(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """개발/테스트용: 저녁 알람 즉시 실행"""
-    await send_evening_alarm(context)
 
 
 # ─────────────────────────────────────────
@@ -266,8 +264,6 @@ def main():
     app.add_handler(CommandHandler("weekstats", week_stats_command))
     app.add_handler(CommandHandler("monthstats", month_stats_command))
     app.add_handler(CommandHandler("myroutine", my_routine_command))
-    app.add_handler(CommandHandler("testmorning", test_morning))
-    app.add_handler(CommandHandler("testevening", test_evening))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     # 스케줄 등록 (KST 기준)
