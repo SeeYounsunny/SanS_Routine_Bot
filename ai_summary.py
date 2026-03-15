@@ -2,9 +2,13 @@ import os
 import anthropic
 from collections import defaultdict
 
-# 모델 이름. Railway에 ANTHROPIC_MODEL을 넣지 않으면 아래 기본값 사용 (넣으면 그 모델 사용).
-# 404 나오면: Anthropic 콘솔에서 사용 가능한 모델 ID를 확인한 뒤 ANTHROPIC_MODEL에 넣거나, 변수 삭제 후 재배포.
-ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
+# ANTHROPIC_MODEL이 있으면 그 모델만 사용. 없으면 아래 목록을 순서대로 시도 (404 시 다음 모델).
+MODEL_FALLBACK_LIST = [
+    "claude-3-5-sonnet-20241022",
+    "claude-sonnet-4-20250514",
+    "claude-3-sonnet-20240229",
+    "claude-haiku-4-5-20251001",
+]
 client = anthropic.AsyncAnthropic()
 
 
@@ -51,24 +55,29 @@ async def generate_summary(routines: list[dict], date: str) -> str:
 💬 *오늘의 한마디*: [응원 메시지]
 """
 
-    try:
-        message = await client.messages.create(
-            model=ANTHROPIC_MODEL,
-            max_tokens=1024,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return message.content[0].text
-    except Exception as e:
-        err = str(e).lower()
-        if "not_found" in err or "404" in err:
-            raise ValueError(
-                "요약용 AI 모델을 찾을 수 없어요. (Anthropic 콘솔에서 사용 가능한 모델 ID를 확인한 뒤 "
-                "Railway Variables에 ANTHROPIC_MODEL로 설정해 주세요. 설정하지 않으면 기본 모델을 사용합니다.)"
+    model_list = [os.environ.get("ANTHROPIC_MODEL")] if os.environ.get("ANTHROPIC_MODEL") else MODEL_FALLBACK_LIST
+    for model in model_list:
+        if not model:
+            continue
+        try:
+            message = await client.messages.create(
+                model=model,
+                max_tokens=1024,
+                messages=[{"role": "user", "content": prompt}],
             )
-        if "rate" in err or "429" in err:
-            raise ValueError(
-                "AI 요청 한도를 다 썼어요. 잠시 후 다시 시도하거나 유료 크레딧을 확인해 주세요."
-            )
-        if "authentication" in err or "401" in err or "invalid" in err:
-            raise ValueError("AI API 키가 올바르지 않아요. ANTHROPIC_API_KEY를 확인해 주세요.")
-        raise
+            return message.content[0].text
+        except Exception as e:
+            err = str(e).lower()
+            if "not_found" in err or "404" in err:
+                continue
+            if "rate" in err or "429" in err:
+                raise ValueError(
+                    "AI 요청 한도를 다 썼어요. 잠시 후 다시 시도하거나 유료 크레딧을 확인해 주세요."
+                )
+            if "authentication" in err or "401" in err or "invalid" in err:
+                raise ValueError("AI API 키가 올바르지 않아요. ANTHROPIC_API_KEY를 확인해 주세요.")
+            raise
+    raise ValueError(
+        "요약용 AI 모델을 찾을 수 없어요. Anthropic 콘솔에서 사용 가능한 모델 ID를 확인한 뒤 "
+        "Railway Variables에 ANTHROPIC_MODEL로 설정해 주세요."
+    )
