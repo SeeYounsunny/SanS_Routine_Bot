@@ -229,6 +229,28 @@ class Database:
                 rows = await cur.fetchall()
                 return [dict(r) for r in rows]
 
+    async def delete_user_routines_for_date(self, user_id: int, date: str) -> int:
+        """해당 유저의 해당 날짜 루틴 전부 삭제. 삭제된 행 수 반환."""
+        if self.use_postgres:
+            conn = await asyncpg.connect(DATABASE_URL)
+            try:
+                result = await conn.execute(
+                    "DELETE FROM routines WHERE user_id = $1 AND date = $2",
+                    user_id,
+                    date,
+                )
+                return int(result.split()[-1]) if result else 0
+            finally:
+                await conn.close()
+
+        async with aiosqlite.connect(DB_PATH) as conn:
+            cur = await conn.execute(
+                "DELETE FROM routines WHERE user_id = ? AND date = ?",
+                (user_id, date),
+            )
+            await conn.commit()
+            return cur.rowcount
+
     # ── 집계용 통계 쿼리 ─────────────────────────────────────
 
     async def get_top_users(self, start_date: str, end_date: str, limit: int) -> list[dict]:

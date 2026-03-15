@@ -132,13 +132,24 @@ async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await context.bot.send_message(
         chat_id=chat.id,
         text=(
-            f"📝 *오늘 루틴을 작성해보세요!*\n\n"
-            f"*{today_label}* 오늘 하루에 실천하고 싶은/실천한 루틴을 자유롭게 적어주세요.\n\n"
+            f"📝 *오늘 루틴을 추가해주세요!*\n\n"
+            f"*{today_label}* 추가로 실천하고 싶은/실천한 루틴을 적어주세요.\n\n"
             f"👇 *이 메시지에 답장*으로 적어주시면 기록됩니다."
         ),
         parse_mode="Markdown",
     )
     await db.save_prompt_message(msg.message_id, "morning", today_label)
+
+
+async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """오늘 날짜 루틴만 전부 삭제"""
+    user = update.message.from_user
+    today_str = datetime.datetime.now(KST).strftime("%Y-%m-%d")
+    deleted = await db.delete_user_routines_for_date(user.id, today_str)
+    if deleted > 0:
+        await update.message.reply_text(f"✅ 오늘 기록된 루틴 {deleted}개가 삭제되었어요.")
+    else:
+        await update.message.reply_text("📭 오늘 삭제할 루틴이 없어요.")
 
 
 async def chatid_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -301,6 +312,7 @@ def main():
     # 커맨드 등록
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("add", add_command))
+    app.add_handler(CommandHandler("delete", delete_command))
     app.add_handler(CommandHandler("chatid", chatid_command))
     app.add_handler(CommandHandler("summary", summary_command))
     app.add_handler(CommandHandler("weekstats", week_stats_command))
