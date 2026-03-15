@@ -108,22 +108,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/summary — 오늘 전체 루틴 AI 요약 보기\n"
         "/myroutine — 나의 오늘 루틴 확인\n"
         "/testmorning — 아침 알람 즉시 테스트\n"
-        "/testevening — 저녁 알람 즉시 테스트\n"
-        "/chatid — 이 채팅방 ID 확인 (환경변수 설정용)",
+        "/testevening — 저녁 알람 즉시 테스트",
     )
 
-    # 사용자가 헷갈리지 않도록 /start 할 때 채팅 ID도 같이 보여준다.
-    try:
-        chat = update.effective_chat
-        if chat:
-            chat_id = chat.id
-            await update.message.reply_text(
-                f"이 채팅방 ID는 다음과 같습니다:\n\n{chat_id}\n\n"
-                "환경변수 TELEGRAM_CHAT_ID 에 위 숫자를 넣으면 됩니다.",
-            )
-            logger.info(f"/start chat id helper sent: chat_id={chat_id}")
-    except Exception as e:
-        logger.exception("start chat-id helper error")
+    # chatid는 별도 /chatid 명령으로만 확인 가능하게 유지
 
 
 async def chatid_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
