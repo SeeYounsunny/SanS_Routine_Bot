@@ -290,6 +290,51 @@ async def my_routine_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text(text.strip(), parse_mode="Markdown")
 
 
+async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """비밀번호 확인 후 전체 데이터 초기화. 사용법: /reset 비밀번호"""
+    if not context.args or len(context.args) != 1:
+        await update.message.reply_text("사용법: /reset 비밀번호")
+        return
+    password = os.environ.get("RESET_PASSWORD", "0537")
+    if context.args[0] != password:
+        await update.message.reply_text("❌ 비밀번호가 올바르지 않아요.")
+        return
+    await db.delete_all_data()
+    await update.message.reply_text("✅ 모든 데이터가 초기화되었어요.")
+    logger.info("Full reset executed by user_id=%s", update.effective_user.id)
+
+
+async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """해당 날짜의 내 루틴 조회. 사용법: /search YYYY-MM-DD"""
+    if not context.args or len(context.args) != 1:
+        await update.message.reply_text("사용법: /search YYYY-MM-DD (예: /search 2025-03-15)")
+        return
+    date_str = context.args[0].strip()
+    try:
+        datetime.datetime.strptime(date_str, "%Y-%m-%d")
+    except ValueError:
+        await update.message.reply_text("날짜 형식이 올바르지 않아요. YYYY-MM-DD 로 입력해 주세요. (예: 2025-03-15)")
+        return
+    user = update.message.from_user
+    routines = await db.get_user_routines(user.id, date_str)
+    if not routines:
+        await update.message.reply_text(f"📭 {date_str}에 기록된 루틴이 없어요.")
+        return
+    by_type = {"morning": [], "evening": []}
+    for r in routines:
+        t = r.get("routine_type") or "morning"
+        if t not in by_type:
+            by_type[t] = []
+        by_type[t].append((r.get("content") or "").strip())
+    date_label = f"{date_str[5:7]}/{date_str[8:]}"
+    text = f"📋 *{user.full_name}님의 {date_label} 루틴 기록*\n\n"
+    if by_type["morning"]:
+        text += f"🌅 *오전 기록*\n{', '.join(by_type['morning'])}\n\n"
+    if by_type["evening"]:
+        text += f"🌙 *저녁 기록*\n{', '.join(by_type['evening'])}\n\n"
+    await update.message.reply_text(text.strip(), parse_mode="Markdown")
+
+
 # ─────────────────────────────────────────
 # 앱 초기화 & 실행
 # ─────────────────────────────────────────
@@ -313,6 +358,8 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("add", add_command))
     app.add_handler(CommandHandler("delete", delete_command))
+    app.add_handler(CommandHandler("reset", reset_command))
+    app.add_handler(CommandHandler("search", search_command))
     app.add_handler(CommandHandler("chatid", chatid_command))
     app.add_handler(CommandHandler("summary", summary_command))
     app.add_handler(CommandHandler("weekstats", week_stats_command))

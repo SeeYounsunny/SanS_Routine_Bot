@@ -251,6 +251,22 @@ class Database:
             await conn.commit()
             return cur.rowcount
 
+    async def delete_all_data(self) -> None:
+        """루틴·프롬프트 메시지 전체 삭제 (초기화)"""
+        if self.use_postgres:
+            conn = await asyncpg.connect(DATABASE_URL)
+            try:
+                await conn.execute("DELETE FROM routines")
+                await conn.execute("DELETE FROM prompt_messages")
+            finally:
+                await conn.close()
+            return
+
+        async with aiosqlite.connect(DB_PATH) as conn:
+            await conn.execute("DELETE FROM routines")
+            await conn.execute("DELETE FROM prompt_messages")
+            await conn.commit()
+
     # ── 집계용 통계 쿼리 ─────────────────────────────────────
 
     async def get_top_users(self, start_date: str, end_date: str, limit: int) -> list[dict]:
