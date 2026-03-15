@@ -1,6 +1,9 @@
+import os
 import anthropic
 from collections import defaultdict
 
+# 모델 이름을 환경변수로도 바꿀 수 있게 함 (없으면 기본값 사용)
+ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-3-sonnet-20240229")
 client = anthropic.AsyncAnthropic()
 
 
@@ -45,7 +48,7 @@ async def generate_summary(routines: list[dict], date: str) -> str:
 """
 
     message = await client.messages.create(
-        model="claude-3-5-sonnet-20241022",
+        model=ANTHROPIC_MODEL,
         max_tokens=1024,
         messages=[{"role": "user", "content": prompt}],
     )
