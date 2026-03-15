@@ -2,9 +2,9 @@ import os
 import anthropic
 from collections import defaultdict
 
-# 모델 이름. Railway에 ANTHROPIC_MODEL 있으면 그값 사용, 없으면 아래 기본값 사용.
-# 404 나오면: Railway에서 ANTHROPIC_MODEL 변수를 삭제하거나, Anthropic 콘솔에서 사용 가능한 모델 ID로 설정.
-ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-3-sonnet-20240229")
+# 모델 이름. Railway에 ANTHROPIC_MODEL을 넣지 않으면 아래 기본값 사용 (넣으면 그 모델 사용).
+# 404 나오면: Anthropic 콘솔에서 사용 가능한 모델 ID를 확인한 뒤 ANTHROPIC_MODEL에 넣거나, 변수 삭제 후 재배포.
+ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
 client = anthropic.AsyncAnthropic()
 
 
@@ -62,7 +62,8 @@ async def generate_summary(routines: list[dict], date: str) -> str:
         err = str(e).lower()
         if "not_found" in err or "404" in err:
             raise ValueError(
-                "요약용 AI 모델을 찾을 수 없어요. Railway에서 ANTHROPIC_MODEL 값을 확인해 주세요."
+                "요약용 AI 모델을 찾을 수 없어요. (Anthropic 콘솔에서 사용 가능한 모델 ID를 확인한 뒤 "
+                "Railway Variables에 ANTHROPIC_MODEL로 설정해 주세요. 설정하지 않으면 기본 모델을 사용합니다.)"
             )
         if "rate" in err or "429" in err:
             raise ValueError(
