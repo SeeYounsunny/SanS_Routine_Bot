@@ -57,6 +57,20 @@ class Database:
         content: str,
     ):
         async with aiosqlite.connect(DB_PATH) as conn:
+            # 동일한 내용이 같은 날, 같은 타입으로 이미 기록되어 있으면 중복 저장하지 않음
+            async with conn.execute(
+                """
+                SELECT 1 FROM routines
+                WHERE user_id = ? AND date = ? AND routine_type = ? AND content = ?
+                LIMIT 1
+                """,
+                (user_id, date, routine_type, content),
+            ) as cur:
+                exists = await cur.fetchone()
+
+            if exists:
+                return
+
             await conn.execute(
                 "INSERT INTO routines (user_id, user_name, date, routine_type, content) VALUES (?, ?, ?, ?, ?)",
                 (user_id, user_name, date, routine_type, content),
