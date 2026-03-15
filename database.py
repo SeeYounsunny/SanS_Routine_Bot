@@ -125,7 +125,8 @@ class Database:
         routine_type: str,
         content: str,
     ):
-        # 동일한 내용이 같은 날, 같은 타입으로 이미 기록되어 있으면 중복 저장하지 않음
+        content = (content or "").strip()
+        # 동일한 내용이 같은 날, 같은 타입으로 이미 기록되어 있으면 한 번만 기록
         if self.use_postgres:
             conn = await asyncpg.connect(DATABASE_URL)
             try:
