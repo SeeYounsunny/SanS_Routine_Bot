@@ -161,6 +161,8 @@ async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await thinking_msg.edit_text(summary, parse_mode="Markdown")
         except Exception:
             await thinking_msg.edit_text(summary)
+    except ValueError as e:
+        await thinking_msg.edit_text(f"❌ {e}")
     except Exception as e:
         logger.exception("Summary generation failed")
         await thinking_msg.edit_text(

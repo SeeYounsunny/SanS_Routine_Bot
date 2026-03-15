@@ -8,10 +8,13 @@ client = anthropic.AsyncAnthropic()
 
 
 async def generate_summary(routines: list[dict], date: str) -> str:
-    # 사람별로 그룹핑
+    # 사람별로 그룹핑 (키/값 None 방지)
     by_user: dict[str, dict] = defaultdict(lambda: {"morning": [], "evening": []})
     for r in routines:
-        by_user[r["user_name"]][r["routine_type"]].append(r["content"])
+        name = (r.get("user_name") or "").strip() or "이름 없음"
+        rtype = (r.get("routine_type") or "morning").strip() or "morning"
+        content = (r.get("content") or "").strip()
+        by_user[name][rtype].append(content)
 
     # 프롬프트용 텍스트 구성
     date_label = f"{date[:4]}년 {date[5:7]}월 {date[8:]}일"
@@ -47,10 +50,23 @@ async def generate_summary(routines: list[dict], date: str) -> str:
 💬 *오늘의 한마디*: [응원 메시지]
 """
 
-    message = await client.messages.create(
-        model=ANTHROPIC_MODEL,
-        max_tokens=1024,
-        messages=[{"role": "user", "content": prompt}],
-    )
-
-    return message.content[0].text
+    try:
+        message = await client.messages.create(
+            model=ANTHROPIC_MODEL,
+            max_tokens=1024,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return message.content[0].text
+    except Exception as e:
+        err = str(e).lower()
+        if "not_found" in err or "404" in err:
+            raise ValueError(
+                "요약용 AI 모델을 찾을 수 없어요. Railway에서 ANTHROPIC_MODEL 값을 확인해 주세요."
+            )
+        if "rate" in err or "429" in err:
+            raise ValueError(
+                "AI 요청 한도를 다 썼어요. 잠시 후 다시 시도하거나 유료 크레딧을 확인해 주세요."
+            )
+        if "authentication" in err or "401" in err or "invalid" in err:
+            raise ValueError("AI API 키가 올바르지 않아요. ANTHROPIC_API_KEY를 확인해 주세요.")
+        raise
