@@ -125,25 +125,20 @@ class Database:
         routine_type: str,
         content: str,
     ):
-        # 앞뒤 공백 제거 + 연속 공백을 하나로 (띄어쓰기만 다른 것은 같은 내용으로 처리)
+        # 저장용: 앞뒤·연속 공백 정리. 비교용: 공백 전부 제거한 키 (기상 스트레칭 = 기상스트레칭)
         content = " ".join((content or "").split())
-        # 오늘 해당 유저가 적은 모든 내용 중에 이미 같은 내용이 있으면 한 번만 기록 (타입 무관)
+        content_key = "".join((content or "").split()).lower()
+
+        # 오늘 해당 유저가 적은 모든 내용을 가져와서, 공백 제거 키가 하나라도 같으면 중복으로 저장 안 함
+        existing = await self.get_user_routines(user_id, date)
+        for row in existing:
+            existing_key = "".join((row.get("content") or "").split()).lower()
+            if existing_key == content_key:
+                return
+
         if self.use_postgres:
             conn = await asyncpg.connect(DATABASE_URL)
             try:
-                exists = await conn.fetchrow(
-                    """
-                    SELECT 1 FROM routines
-                    WHERE user_id = $1 AND date = $2 AND content = $3
-                    LIMIT 1
-                    """,
-                    user_id,
-                    date,
-                    content,
-                )
-                if exists:
-                    return
-
                 await conn.execute(
                     """
                     INSERT INTO routines (user_id, user_name, date, routine_type, content)
@@ -160,19 +155,6 @@ class Database:
             return
 
         async with aiosqlite.connect(DB_PATH) as conn:
-            async with conn.execute(
-                """
-                SELECT 1 FROM routines
-                WHERE user_id = ? AND date = ? AND content = ?
-                LIMIT 1
-                """,
-                (user_id, date, content),
-            ) as cur:
-                exists = await cur.fetchone()
-
-            if exists:
-                return
-
             await conn.execute(
                 "INSERT INTO routines (user_id, user_name, date, routine_type, content) VALUES (?, ?, ?, ?, ?)",
                 (user_id, user_name, date, routine_type, content),
