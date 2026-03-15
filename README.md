@@ -77,7 +77,7 @@ Railway → 봇 서비스 → **Variables** 탭에서 추가:
 | `/start` | 봇 안내 + 오늘 루틴 작성 프롬프트 바로 전송 |
 | `/add` | 오늘 루틴 추가 작성 (다시 작성 프롬프트 전송) |
 | `/delete` | 오늘 작성한 루틴 전부 삭제 |
-| `/reset 비밀번호` | 전체 데이터 초기화 (비밀번호 일치 시에만 실행, 기본값은 Railway에서 RESET_PASSWORD로 변경 가능) |
+| `/reset 비밀번호` | 전체 데이터 초기화 (서버에 설정된 비밀번호 일치 시에만 실행. 비밀번호는 Railway Variables의 RESET_PASSWORD로 설정) |
 | `/search YYYY-MM-DD` | 해당 날짜의 내 루틴 조회 (예: /search 2025-03-15) |
 | `/summary` | 오늘 전체 루틴 AI 요약 (ANTHROPIC_API_KEY 필요) |
 | `/myroutine` | 나의 오늘 루틴 기록 확인 |
