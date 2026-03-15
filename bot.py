@@ -149,6 +149,68 @@ async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await thinking_msg.edit_text("❌ 요약 생성 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.")
 
 
+async def week_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """지난 7일간 통계"""
+    today = datetime.datetime.now(KST).date()
+    start_date = today - datetime.timedelta(days=6)
+    start_str = start_date.strftime("%Y-%m-%d")
+    end_str = today.strftime("%Y-%m-%d")
+
+    top_users = await db.get_top_users(start_str, end_str, limit=3)
+    top_routines = await db.get_top_routines(start_str, end_str, limit=3)
+
+    if not top_users and not top_routines:
+        await update.message.reply_text("📭 지난 7일 동안 기록된 루틴이 아직 없어요.")
+        return
+
+    text = "📊 *지난 7일 루틴 통계*\n\n"
+
+    if top_users:
+        text += "👤 *가장 많이 기록한 사람 TOP 3*\n"
+        for idx, row in enumerate(top_users, start=1):
+            text += f"{idx}위 {row['user_name']} ({row['count']}회)\n"
+        text += "\n"
+
+    if top_routines:
+        text += "✅ *가장 많이 기록된 루틴 TOP 3*\n"
+        for idx, row in enumerate(top_routines, start=1):
+            content = row["content"]
+            text += f"{idx}위 {content} ({row['count']}회)\n"
+
+    await update.message.reply_text(text.strip(), parse_mode="Markdown")
+
+
+async def month_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """지난 30일간 통계"""
+    today = datetime.datetime.now(KST).date()
+    start_date = today - datetime.timedelta(days=29)
+    start_str = start_date.strftime("%Y-%m-%d")
+    end_str = today.strftime("%Y-%m-%d")
+
+    top_users = await db.get_top_users(start_str, end_str, limit=5)
+    top_routines = await db.get_top_routines(start_str, end_str, limit=5)
+
+    if not top_users and not top_routines:
+        await update.message.reply_text("📭 지난 30일 동안 기록된 루틴이 아직 없어요.")
+        return
+
+    text = "📊 *지난 30일 루틴 통계*\n\n"
+
+    if top_users:
+        text += "👤 *가장 많이 기록한 사람 TOP 5*\n"
+        for idx, row in enumerate(top_users, start=1):
+            text += f"{idx}위 {row['user_name']} ({row['count']}회)\n"
+        text += "\n"
+
+    if top_routines:
+        text += "✅ *가장 많이 기록된 루틴 TOP 5*\n"
+        for idx, row in enumerate(top_routines, start=1):
+            content = row["content"]
+            text += f"{idx}위 {content} ({row['count']}회)\n"
+
+    await update.message.reply_text(text.strip(), parse_mode="Markdown")
+
+
 async def my_routine_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
     today_str = datetime.datetime.now(KST).strftime("%Y-%m-%d")
@@ -201,6 +263,8 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("chatid", chatid_command))
     app.add_handler(CommandHandler("summary", summary_command))
+    app.add_handler(CommandHandler("weekstats", week_stats_command))
+    app.add_handler(CommandHandler("monthstats", month_stats_command))
     app.add_handler(CommandHandler("myroutine", my_routine_command))
     app.add_handler(CommandHandler("testmorning", test_morning))
     app.add_handler(CommandHandler("testevening", test_evening))
