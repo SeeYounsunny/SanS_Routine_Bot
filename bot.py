@@ -103,7 +103,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📌 사용법\n"
         "• 매일 아침 8시 알람 → 답장으로 오늘 루틴 작성\n"
         "• 매일 저녁 9시 알람 → 아직 못 쓴 사람을 위한 리마인드 알림\n\n"
-        "아래 메시지에 오늘의 루틴을 바로 적어보세요. 😊",
+        "아래 메시지에 오늘의 루틴을 바로 적어보세요. 😊\n\n"
+        "나중에 추가로 적고 싶으면 /add 를 입력하세요.",
     )
 
     # 오늘 루틴을 바로 받을 프롬프트 메시지 전송
@@ -120,6 +121,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown",
         )
         await db.save_prompt_message(msg.message_id, "morning", today_label)
+
+
+async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """오늘 루틴 추가: /start 이후에 다시 루틴 작성 프롬프트를 띄움"""
+    chat = update.effective_chat
+    if not chat:
+        return
+    today_label = datetime.datetime.now(KST).strftime("%m/%d")
+    msg = await context.bot.send_message(
+        chat_id=chat.id,
+        text=(
+            f"📝 *오늘 루틴을 작성해보세요!*\n\n"
+            f"*{today_label}* 오늘 하루에 실천하고 싶은/실천한 루틴을 자유롭게 적어주세요.\n\n"
+            f"👇 *이 메시지에 답장*으로 적어주시면 기록됩니다."
+        ),
+        parse_mode="Markdown",
+    )
+    await db.save_prompt_message(msg.message_id, "morning", today_label)
 
 
 async def chatid_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -242,12 +261,20 @@ async def my_routine_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("📭 오늘 기록된 루틴이 아직 없어요.")
         return
 
+    # 타입별로 묶어서 한 줄에 쉼표로 표시
+    by_type = {"morning": [], "evening": []}
+    for r in routines:
+        t = r.get("routine_type") or "morning"
+        if t not in by_type:
+            by_type[t] = []
+        by_type[t].append((r.get("content") or "").strip())
+
     today_label = datetime.datetime.now(KST).strftime("%m/%d")
     text = f"📋 *{user.full_name}님의 {today_label} 루틴 기록*\n\n"
-    for r in routines:
-        emoji = "🌅" if r["routine_type"] == "morning" else "🌙"
-        label = "오전 기록" if r["routine_type"] == "morning" else "저녁 기록"
-        text += f"{emoji} *{label}*\n{r['content']}\n\n"
+    if by_type["morning"]:
+        text += f"🌅 *오전 기록*\n{', '.join(by_type['morning'])}\n\n"
+    if by_type["evening"]:
+        text += f"🌙 *저녁 기록*\n{', '.join(by_type['evening'])}\n\n"
 
     await update.message.reply_text(text.strip(), parse_mode="Markdown")
 
@@ -273,6 +300,7 @@ def main():
 
     # 커맨드 등록
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("add", add_command))
     app.add_handler(CommandHandler("chatid", chatid_command))
     app.add_handler(CommandHandler("summary", summary_command))
     app.add_handler(CommandHandler("weekstats", week_stats_command))
