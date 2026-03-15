@@ -37,6 +37,18 @@ class Database:
                     )
                     """
                 )
+                await conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS routine_selection_prompts (
+                        message_id       BIGINT PRIMARY KEY,
+                        user_id          BIGINT NOT NULL,
+                        chat_id          BIGINT NOT NULL,
+                        selection_date   TEXT NOT NULL,
+                        items_json       TEXT NOT NULL,
+                        prompt_type      TEXT NOT NULL
+                    )
+                    """
+                )
             finally:
                 await conn.close()
             return
@@ -62,6 +74,18 @@ class Database:
                     message_id   INTEGER PRIMARY KEY,
                     prompt_type  TEXT NOT NULL,
                     date         TEXT NOT NULL
+                )
+                """
+            )
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS routine_selection_prompts (
+                    message_id       INTEGER PRIMARY KEY,
+                    user_id          INTEGER NOT NULL,
+                    chat_id          INTEGER NOT NULL,
+                    selection_date   TEXT NOT NULL,
+                    items_json       TEXT NOT NULL,
+                    prompt_type      TEXT NOT NULL
                 )
                 """
             )
@@ -114,6 +138,98 @@ class Database:
             ) as cur:
                 row = await cur.fetchone()
                 return row[0] if row else None
+
+    # ── 어제 루틴 선택용 프롬프트 (번호로 선택) ─────────────────
+
+    async def save_selection_prompt(
+        self,
+        message_id: int,
+        user_id: int,
+        chat_id: int,
+        selection_date: str,
+        items_json: str,
+        prompt_type: str,
+    ):
+        if self.use_postgres:
+            conn = await asyncpg.connect(DATABASE_URL)
+            try:
+                await conn.execute(
+                    """
+                    INSERT INTO routine_selection_prompts
+                    (message_id, user_id, chat_id, selection_date, items_json, prompt_type)
+                    VALUES ($1, $2, $3, $4, $5, $6)
+                    ON CONFLICT (message_id)
+                    DO UPDATE SET user_id = EXCLUDED.user_id, chat_id = EXCLUDED.chat_id,
+                                  selection_date = EXCLUDED.selection_date, items_json = EXCLUDED.items_json,
+                                  prompt_type = EXCLUDED.prompt_type
+                    """,
+                    message_id,
+                    user_id,
+                    chat_id,
+                    selection_date,
+                    items_json,
+                    prompt_type,
+                )
+            finally:
+                await conn.close()
+            return
+
+        async with aiosqlite.connect(DB_PATH) as conn:
+            await conn.execute(
+                """
+                INSERT OR REPLACE INTO routine_selection_prompts
+                (message_id, user_id, chat_id, selection_date, items_json, prompt_type)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (message_id, user_id, chat_id, selection_date, items_json, prompt_type),
+            )
+            await conn.commit()
+
+    async def get_selection_prompt(self, message_id: int) -> dict | None:
+        if self.use_postgres:
+            conn = await asyncpg.connect(DATABASE_URL)
+            try:
+                row = await conn.fetchrow(
+                    """
+                    SELECT user_id, chat_id, selection_date, items_json, prompt_type
+                    FROM routine_selection_prompts WHERE message_id = $1
+                    """,
+                    message_id,
+                )
+                return dict(row) if row else None
+            finally:
+                await conn.close()
+
+        async with aiosqlite.connect(DB_PATH) as conn:
+            conn.row_factory = aiosqlite.Row
+            async with conn.execute(
+                """
+                SELECT user_id, chat_id, selection_date, items_json, prompt_type
+                FROM routine_selection_prompts WHERE message_id = ?
+                """,
+                (message_id,),
+            ) as cur:
+                row = await cur.fetchone()
+                return dict(row) if row else None
+
+    async def delete_selection_prompt(self, message_id: int):
+        if self.use_postgres:
+            conn = await asyncpg.connect(DATABASE_URL)
+            try:
+                await conn.execute(
+                    "DELETE FROM routine_selection_prompts WHERE message_id = $1",
+                    message_id,
+                )
+            finally:
+                await conn.close()
+            return
+
+        async with aiosqlite.connect(DB_PATH) as conn:
+            await conn.execute(
+                "DELETE FROM routine_selection_prompts WHERE message_id = ?",
+                (message_id,),
+            )
+            await conn.commit()
 
     # ── 루틴 저장/조회 ─────────────────────────────────────
 

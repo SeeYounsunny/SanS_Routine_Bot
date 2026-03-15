@@ -1,4 +1,5 @@
 import os
+import json
 import logging
 import datetime
 import pytz
@@ -64,22 +65,89 @@ async def send_evening_alarm(context: ContextTypes.DEFAULT_TYPE):
 # 메시지 핸들러
 # ─────────────────────────────────────────
 
+def _parse_selection_reply(text: str, items: list[str]) -> list[str]:
+    """메시지에서 번호(어제 루틴 인덱스)와 새 텍스트를 파싱해 저장할 content 목록 반환."""
+    if not (text or text.strip()):
+        return []
+    parts = [p.strip() for p in (text or "").split(",") if p.strip()]
+    result = []
+    n = len(items)
+    for p in parts:
+        if p.isdigit() and 1 <= int(p) <= n:
+            result.append(items[int(p) - 1])
+        elif p:
+            result.append(p)
+    return result
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """알림/시작 메시지에 답장하면 루틴으로 저장"""
+    """알림/시작 메시지에 답장하면 루틴으로 저장. 어제 루틴이 있으면 번호 선택 메시지를 보낸 뒤, 그 답장으로 저장."""
     msg = update.message
     if not msg or not msg.reply_to_message:
         return
 
     reply_to_id = msg.reply_to_message.message_id
-    prompt_type = await db.get_prompt_type(reply_to_id)
-
-    if not prompt_type:
-        return  # 봇 알람에 대한 답장이 아님
-
     user = msg.from_user
     name = user.full_name or user.username or str(user.id)
     today_str = datetime.datetime.now(KST).strftime("%Y-%m-%d")
+    yesterday = (datetime.datetime.now(KST) - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
 
+    # 1) 어제 루틴 선택용 메시지에 대한 답장인지 확인
+    sel = await db.get_selection_prompt(reply_to_id)
+    if sel:
+        items = json.loads(sel["items_json"])
+        to_save = _parse_selection_reply(msg.text or "", items)
+        for content in to_save:
+            await db.save_routine(
+                user_id=user.id,
+                user_name=name,
+                date=today_str,
+                routine_type=sel["prompt_type"],
+                content=content,
+            )
+        await db.delete_selection_prompt(reply_to_id)
+        count = len(to_save)
+        await msg.reply_text(f"✅ *{name}*님의 오늘 루틴 {count}개 기록했어요!", parse_mode="Markdown")
+        logger.info(f"Routine saved from selection | user={name}, count={count}")
+        return
+
+    # 2) 알람/시작 프롬프트에 대한 답장인지 확인
+    prompt_type = await db.get_prompt_type(reply_to_id)
+    if not prompt_type:
+        return  # 봇 알람에 대한 답장이 아님
+
+    # 3) 어제 루틴이 있으면 번호 선택 메시지 전송 후 대기
+    yesterday_routines = await db.get_user_routines(user.id, yesterday)
+    seen_keys = set()
+    items = []
+    for row in yesterday_routines:
+        c = (row.get("content") or "").strip()
+        key = "".join(c.split()).lower()
+        if key and key not in seen_keys:
+            seen_keys.add(key)
+            items.append(c)
+
+    if items:
+        lines = [f"{i}. {item}" for i, item in enumerate(items, 1)]
+        list_text = "\n".join(lines)
+        sent = await msg.reply_text(
+            f"📋 *어제 루틴에서 선택* (번호 입력 예: 1,3) 또는 새로 적어주세요.\n\n"
+            f"{list_text}\n\n"
+            f"👇 *이 메시지에 답장*으로 번호 또는 새 루틴을 적어주세요.",
+            parse_mode="Markdown",
+        )
+        await db.save_selection_prompt(
+            message_id=sent.message_id,
+            user_id=user.id,
+            chat_id=msg.chat_id,
+            selection_date=yesterday,
+            items_json=json.dumps(items, ensure_ascii=False),
+            prompt_type=prompt_type,
+        )
+        logger.info(f"Selection prompt sent | user={name}, items={len(items)}")
+        return
+
+    # 4) 어제 루틴 없음 → 기존처럼 한 번에 저장
     await db.save_routine(
         user_id=user.id,
         user_name=name,
@@ -87,7 +155,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         routine_type=prompt_type,
         content=msg.text or "",
     )
-
     await msg.reply_text(f"✅ *{name}*님의 오늘 루틴이 기록됐어요!", parse_mode="Markdown")
     logger.info(f"Routine saved | user={name}, type={prompt_type}")
 
