@@ -125,20 +125,20 @@ class Database:
         routine_type: str,
         content: str,
     ):
-        content = (content or "").strip()
-        # 동일한 내용이 같은 날, 같은 타입으로 이미 기록되어 있으면 한 번만 기록
+        # 앞뒤 공백 제거 + 연속 공백을 하나로 (띄어쓰기만 다른 것은 같은 내용으로 처리)
+        content = " ".join((content or "").split())
+        # 오늘 해당 유저가 적은 모든 내용 중에 이미 같은 내용이 있으면 한 번만 기록 (타입 무관)
         if self.use_postgres:
             conn = await asyncpg.connect(DATABASE_URL)
             try:
                 exists = await conn.fetchrow(
                     """
                     SELECT 1 FROM routines
-                    WHERE user_id = $1 AND date = $2 AND routine_type = $3 AND content = $4
+                    WHERE user_id = $1 AND date = $2 AND content = $3
                     LIMIT 1
                     """,
                     user_id,
                     date,
-                    routine_type,
                     content,
                 )
                 if exists:
@@ -163,10 +163,10 @@ class Database:
             async with conn.execute(
                 """
                 SELECT 1 FROM routines
-                WHERE user_id = ? AND date = ? AND routine_type = ? AND content = ?
+                WHERE user_id = ? AND date = ? AND content = ?
                 LIMIT 1
                 """,
-                (user_id, date, routine_type, content),
+                (user_id, date, content),
             ) as cur:
                 exists = await cur.fetchone()
 
