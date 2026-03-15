@@ -141,6 +141,12 @@ async def chatid_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        await update.message.reply_text(
+            "❌ 요약 기능을 쓰려면 서버에 ANTHROPIC_API_KEY 환경변수가 설정되어 있어야 해요."
+        )
+        return
+
     today_str = datetime.datetime.now(KST).strftime("%Y-%m-%d")
     routines = await db.get_today_routines(today_str)
 
@@ -151,10 +157,16 @@ async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     thinking_msg = await update.message.reply_text("⏳ AI가 요약을 생성 중입니다...")
     try:
         summary = await generate_summary(routines, today_str)
-        await thinking_msg.edit_text(summary, parse_mode="Markdown")
+        try:
+            await thinking_msg.edit_text(summary, parse_mode="Markdown")
+        except Exception:
+            await thinking_msg.edit_text(summary)
     except Exception as e:
-        logger.error(f"Summary generation failed: {e}")
-        await thinking_msg.edit_text("❌ 요약 생성 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.")
+        logger.exception("Summary generation failed")
+        await thinking_msg.edit_text(
+            "❌ 요약 생성 중 오류가 발생했어요. 잠시 후 다시 시도해주세요. "
+            "(관리자: Railway 로그에서 Summary generation failed 확인)"
+        )
 
 
 async def week_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
