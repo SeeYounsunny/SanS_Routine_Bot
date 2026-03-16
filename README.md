@@ -1,6 +1,7 @@
 # 📅 SanS 루틴 봇
 
-매일 아침/저녁 알림을 보내고, 그룹 멤버들의 **오늘 루틴**을 기록·요약해 주는 텔레그램 그룹 봇입니다.
+매일 아침/저녁 알림을 보내고, 그룹 멤버들의 **오늘 루틴**을 기록·요약해 주는 텔레그램 그룹 봇입니다.  
+봇 유저네임: [@sans_routine_bot](https://t.me/sans_routine_bot)
 
 ---
 
@@ -32,7 +33,7 @@
 
 ### 2단계: Chat ID 확인
 
-1. 봇을 그룹에 초대한 뒤 그룹에서 메시지 한 번 전송
+1. [@sans_routine_bot](https://t.me/sans_routine_bot) 을 그룹에 초대한 뒤 그룹에서 메시지 한 번 전송
 2. 봇이 켜진 상태에서 해당 채팅에서 `/chatid` 입력 → 봇이 채팅방 ID를 알려줌  
    (또는 봇을 끄고 `https://api.telegram.org/bot<토큰>/getUpdates` 에서 `chat.id` 확인)
 
@@ -58,6 +59,7 @@ Railway → 봇 서비스 → **Variables** 탭에서 추가:
 
 | 변수 | 설명 |
 |------|------|
+| `TELEGRAM_BOT_USERNAME` | 1:1 루틴 입력 안내에 표시할 봇 유저네임 (기본: `sans_routine_bot`) |
 | `ANTHROPIC_MODEL` | 사용할 Claude 모델 (기본: `claude-3-sonnet-20240229`) |
 | `DB_PATH` | SQLite 사용 시 DB 파일 경로 (기본: `routines.db`) |
 

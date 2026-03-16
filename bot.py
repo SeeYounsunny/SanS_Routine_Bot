@@ -124,10 +124,8 @@ def _parse_selection_reply(text: str, items: list[str]) -> list[str]:
 
 def _dm_add_hint(context: ContextTypes.DEFAULT_TYPE) -> str:
     """1:1에서 /add 하라는 안내 문구 (봇 링크 포함)."""
-    username = (context.bot.username or "").strip()
-    if username:
-        return f"루틴 입력은 봇과 *1:1 대화*에서 해 주세요.\nhttps://t.me/{username} 에서 /add 를 입력하세요."
-    return "루틴 입력은 봇과 1:1 대화에서 /add 를 입력해 주세요."
+    username = (os.environ.get("TELEGRAM_BOT_USERNAME") or "sans_routine_bot").strip()
+    return f"루틴 입력은 봇과 *1:1 대화*에서 해 주세요.\nhttps://t.me/{username} 에서 /add 를 입력하세요."
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
