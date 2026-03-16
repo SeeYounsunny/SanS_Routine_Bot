@@ -59,7 +59,7 @@ Railway → 봇 서비스 → **Variables** 탭에서 추가:
 
 | 변수 | 설명 |
 |------|------|
-| `TELEGRAM_BOT_USERNAME` | 1:1 루틴 입력 안내에 표시할 봇 유저네임 (기본: `sans_routine_bot`) |
+| `TELEGRAM_BOT_USERNAME` | 1:1 루틴 입력 안내 링크용 봇 유저네임. **Railway**: 서비스 → Variables 탭에서 추가/수정. `sans_routine_bot` 으로 두면 됨 (다른 봇 쓰면 해당 유저네임 입력) |
 | `ANTHROPIC_MODEL` | 사용할 Claude 모델 (기본: `claude-3-sonnet-20240229`) |
 | `DB_PATH` | SQLite 사용 시 DB 파일 경로 (기본: `routines.db`) |
 

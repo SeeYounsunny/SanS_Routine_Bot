@@ -122,9 +122,15 @@ def _parse_selection_reply(text: str, items: list[str]) -> list[str]:
     return result
 
 
+# 1:1 안내에 표시할 루틴 봇 유저네임 (기본값 및 오타 보정용)
+BOT_USERNAME_FOR_LINK = "sans_routine_bot"
+
+
 def _dm_add_hint(context: ContextTypes.DEFAULT_TYPE) -> str:
     """1:1에서 /add 하라는 안내 문구 (봇 링크 포함)."""
-    username = (os.environ.get("TELEGRAM_BOT_USERNAME") or "sans_routine_bot").strip()
+    raw = (os.environ.get("TELEGRAM_BOT_USERNAME") or BOT_USERNAME_FOR_LINK).strip()
+    # sansroutinebot(언더스코어 누락) 등 잘못된 값이면 올바른 유저네임으로 보정
+    username = BOT_USERNAME_FOR_LINK if raw.lower() == "sansroutinebot" else raw
     return f"루틴 입력은 봇과 *1:1 대화*에서 해 주세요.\nhttps://t.me/{username} 에서 /add 를 입력하세요."
 
 
