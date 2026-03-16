@@ -27,10 +27,6 @@ db = Database()
 # 예약 알람
 # ─────────────────────────────────────────
 
-# 1:1 루틴 입력 이동 링크 (고정)
-ROUTINE_BOT_LINK = "https://t.me/sans_routine_bot"
-
-
 async def send_morning_alarm(context: ContextTypes.DEFAULT_TYPE):
     chat_id = os.environ["TELEGRAM_CHAT_ID"]
     today = datetime.datetime.now(KST).strftime("%m/%d")
@@ -40,7 +36,7 @@ async def send_morning_alarm(context: ContextTypes.DEFAULT_TYPE):
         text=(
             f"🌅 *오늘 루틴을 적어볼까요?*\n\n"
             f"*{today}* 오늘 하루에 실천하고 싶은/실천한 루틴을 자유롭게 적어주세요. 💪\n\n"
-            f"아래 링크 클릭해서 각자 루틴 입력해 주세요.\n{ROUTINE_BOT_LINK}"
+            "아래 링크 클릭해서 각자 루틴 입력해 주세요.\nhttps://t.me/sans_routine_bot"
         ),
         parse_mode="Markdown",
     )
@@ -57,7 +53,7 @@ async def send_evening_alarm(context: ContextTypes.DEFAULT_TYPE):
         text=(
             f"🌙 *오늘 루틴, 마무리해볼까요?*\n\n"
             f"*{today}* 아직 오늘 루틴을 적지 않았다면 지금 적어주세요. ✨\n\n"
-            f"아래 링크 클릭해서 각자 루틴 입력해 주세요.\n{ROUTINE_BOT_LINK}"
+            "아래 링크 클릭해서 각자 루틴 입력해 주세요.\nhttps://t.me/sans_routine_bot"
         ),
         parse_mode="Markdown",
     )
@@ -127,8 +123,12 @@ def _parse_selection_reply(text: str, items: list[str]) -> list[str]:
 
 
 def _dm_add_hint(context: ContextTypes.DEFAULT_TYPE) -> str:
-    """1:1에서 /add 하라는 안내 문구. 링크 클릭 시 봇 대화로 이동."""
-    return f"루틴 입력은 봇과 *1:1 대화*에서 해 주세요.\n아래 링크에서 /add 를 입력하세요.\n{ROUTINE_BOT_LINK}"
+    """1:1에서 /add 하라는 안내 문구. 링크는 sans_routine_bot 고정."""
+    return (
+        "루틴 입력은 봇과 *1:1 대화*에서 해 주세요.\n"
+        "아래 링크에서 /add 를 입력하세요.\n"
+        "https://t.me/sans_routine_bot"
+    )
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
