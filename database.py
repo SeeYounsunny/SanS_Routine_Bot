@@ -328,6 +328,43 @@ class Database:
                 rows = await cur.fetchall()
                 return [dict(r) for r in rows]
 
+    async def get_user_all_contents(self, user_id: int) -> list[str]:
+        """해당 유저가 기록한 모든 루틴의 content 목록 (통계용)."""
+        if self.use_postgres:
+            conn = await asyncpg.connect(DATABASE_URL)
+            try:
+                rows = await conn.fetch(
+                    "SELECT content FROM routines WHERE user_id = $1",
+                    user_id,
+                )
+                return [r["content"] or "" for r in rows]
+            finally:
+                await conn.close()
+
+        async with aiosqlite.connect(DB_PATH) as conn:
+            async with conn.execute(
+                "SELECT content FROM routines WHERE user_id = ?",
+                (user_id,),
+            ) as cur:
+                rows = await cur.fetchall()
+                return [r[0] or "" for r in rows]
+
+    async def get_user_top_routines(self, user_id: int, limit: int = 5) -> list[dict]:
+        """해당 유저가 자주 사용한 루틴 TOP N (공백 제거·소문자 통일 후 집계). 반환: [{"content": str, "count": int}, ...]"""
+        contents = await self.get_user_all_contents(user_id)
+        key_to_content = {}
+        key_count = {}
+        for c in contents:
+            c = (c or "").strip()
+            key = "".join(c.split()).lower()
+            if not key:
+                continue
+            key_count[key] = key_count.get(key, 0) + 1
+            if key not in key_to_content:
+                key_to_content[key] = c
+        sorted_keys = sorted(key_to_content.keys(), key=lambda k: -key_count[k])[:limit]
+        return [{"content": key_to_content[k], "count": key_count[k]} for k in sorted_keys]
+
     async def delete_user_routines_for_date(self, user_id: int, date: str) -> int:
         """해당 유저의 해당 날짜 루틴 전부 삭제. 삭제된 행 수 반환."""
         if self.use_postgres:

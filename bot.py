@@ -36,7 +36,7 @@ async def send_morning_alarm(context: ContextTypes.DEFAULT_TYPE):
         text=(
             f"🌅 *오늘 루틴을 적어볼까요?*\n\n"
             f"*{today}* 오늘 하루에 실천하고 싶은/실천한 루틴을 자유롭게 적어주세요. 💪\n\n"
-            f"👇 *이 메시지에 답장*으로 오늘 루틴을 적어주세요."
+            f"봇과 *1:1 대화*에서 /add 를 입력해 오늘 루틴을 적어 주세요."
         ),
         parse_mode="Markdown",
     )
@@ -53,12 +53,54 @@ async def send_evening_alarm(context: ContextTypes.DEFAULT_TYPE):
         text=(
             f"🌙 *오늘 루틴, 마무리해볼까요?*\n\n"
             f"*{today}* 아직 오늘 루틴을 적지 않았다면 지금 적어주세요. ✨\n\n"
-            f"👇 *이 메시지에 답장*으로 오늘 실천한 루틴을 적어주세요."
+            f"봇과 *1:1 대화*에서 /add 를 입력해 오늘 루틴을 적어 주세요."
         ),
         parse_mode="Markdown",
     )
     await db.save_prompt_message(msg.message_id, "evening", today)
     logger.info(f"Evening alarm sent | message_id={msg.message_id}")
+
+
+async def send_lunch_reminder(context: ContextTypes.DEFAULT_TYPE):
+    """점심시간 단체방 리마인드: 오늘 오전까지 입력한 사람별 루틴 내용 한 번 공지"""
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    if not chat_id:
+        return
+    today_str = datetime.datetime.now(KST).strftime("%Y-%m-%d")
+    routines = await db.get_today_routines(today_str)
+
+    by_user = {}
+    for r in routines:
+        name = (r.get("user_name") or "").strip() or "이름 없음"
+        content = (r.get("content") or "").strip()
+        if name not in by_user:
+            by_user[name] = []
+        if content:
+            by_user[name].append(content)
+
+    if not by_user:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=(
+                "☀️ *점심 리마인드*\n\n"
+                "아직 오늘 루틴을 입력한 사람이 없어요.\n"
+                "봇과 1:1 대화에서 /add 를 입력해 주세요! 💪"
+            ),
+            parse_mode="Markdown",
+        )
+    else:
+        lines = []
+        for name, contents in sorted(by_user.items()):
+            lines.append(f"• *{name}*: {', '.join(contents)}")
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=(
+                "☀️ *점심 리마인드* — 오늘 오전까지 입력한 루틴\n\n"
+                + "\n".join(lines)
+            ),
+            parse_mode="Markdown",
+        )
+    logger.info("Lunch reminder sent")
 
 
 # ─────────────────────────────────────────
@@ -80,8 +122,16 @@ def _parse_selection_reply(text: str, items: list[str]) -> list[str]:
     return result
 
 
+def _dm_add_hint(context: ContextTypes.DEFAULT_TYPE) -> str:
+    """1:1에서 /add 하라는 안내 문구 (봇 링크 포함)."""
+    username = (context.bot.username or "").strip()
+    if username:
+        return f"루틴 입력은 봇과 *1:1 대화*에서 해 주세요.\nhttps://t.me/{username} 에서 /add 를 입력하세요."
+    return "루틴 입력은 봇과 1:1 대화에서 /add 를 입력해 주세요."
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """알림/시작 메시지에 답장하면 루틴으로 저장. 어제 루틴이 있으면 번호 선택 메시지를 보낸 뒤, 그 답장으로 저장."""
+    """알림에 답장하면 루틴 저장. 단체방에서는 저장하지 않고 1:1 유도. 개인채팅에서만 어제 루틴 선택·저장."""
     msg = update.message
     if not msg or not msg.reply_to_message:
         return
@@ -89,8 +139,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_to_id = msg.reply_to_message.message_id
     user = msg.from_user
     name = user.full_name or user.username or str(user.id)
+    chat = update.effective_chat
     today_str = datetime.datetime.now(KST).strftime("%Y-%m-%d")
     yesterday = (datetime.datetime.now(KST) - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+
+    # 단체방에서는 루틴 저장/선택 없이 1:1 유도만
+    if chat and chat.type in ("group", "supergroup"):
+        sel = await db.get_selection_prompt(reply_to_id)
+        prompt_type = await db.get_prompt_type(reply_to_id)
+        if sel or prompt_type:
+            await msg.reply_text(_dm_add_hint(context), parse_mode="Markdown")
+            return
 
     # 1) 어제 루틴 선택용 메시지에 대한 답장인지 확인
     sel = await db.get_selection_prompt(reply_to_id)
@@ -176,15 +235,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """오늘 루틴 추가: 어제 루틴이 있으면 바로 선택지, 없으면 일반 프롬프트"""
+    """오늘 루틴 추가: 단체방이면 1:1 유도, 개인채팅에서만 어제 루틴 선택(본인 것만) 또는 입력 프롬프트"""
     chat = update.effective_chat
     user = update.message.from_user
     if not chat or not user:
         return
 
+    # 단체방에서는 루틴 입력을 하지 않고 1:1 대화로 유도
+    if chat.type in ("group", "supergroup"):
+        await update.message.reply_text(
+            _dm_add_hint(context) + "\n\n입력·저장이 끝나면 개인 대화창에서 안내해 드려요.",
+            parse_mode="Markdown",
+        )
+        return
+
     today_label = datetime.datetime.now(KST).strftime("%m/%d")
     yesterday = (datetime.datetime.now(KST) - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
 
+    # 개인채팅: 해당 유저의 어제 루틴만 표시 (남의 루틴 아님)
     yesterday_routines = await db.get_user_routines(user.id, yesterday)
     seen_keys = set()
     items = []
@@ -353,7 +421,8 @@ async def month_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(text.strip(), parse_mode="Markdown")
 
 
-async def my_routine_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """오늘 내가 입력한 루틴 내용 보여주기"""
     user = update.message.from_user
     today_str = datetime.datetime.now(KST).strftime("%Y-%m-%d")
     routines = await db.get_user_routines(user.id, today_str)
@@ -362,7 +431,6 @@ async def my_routine_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("📭 오늘 기록된 루틴이 아직 없어요.")
         return
 
-    # 타입별로 묶어서 한 줄에 쉼표로 표시
     by_type = {"morning": [], "evening": []}
     for r in routines:
         t = r.get("routine_type") or "morning"
@@ -371,11 +439,27 @@ async def my_routine_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         by_type[t].append((r.get("content") or "").strip())
 
     today_label = datetime.datetime.now(KST).strftime("%m/%d")
-    text = f"📋 *{user.full_name}님의 {today_label} 루틴 기록*\n\n"
+    text = f"📋 *오늘({today_label}) 내 루틴*\n\n"
     if by_type["morning"]:
         text += f"🌅 *오전 기록*\n{', '.join(by_type['morning'])}\n\n"
     if by_type["evening"]:
         text += f"🌙 *저녁 기록*\n{', '.join(by_type['evening'])}\n\n"
+
+    await update.message.reply_text(text.strip(), parse_mode="Markdown")
+
+
+async def my_routine_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """내가 그동안 자주 사용하는 루틴 목록 TOP 5"""
+    user = update.message.from_user
+    top = await db.get_user_top_routines(user.id, limit=5)
+
+    if not top:
+        await update.message.reply_text("📭 아직 기록된 루틴이 없어요. 루틴을 입력하면 자주 쓰는 항목이 여기 나타나요.")
+        return
+
+    text = "📌 *자주 사용하는 루틴 TOP 5*\n\n"
+    for i, row in enumerate(top, 1):
+        text += f"{i}. {row['content']} ({row['count']}회)\n"
 
     await update.message.reply_text(text.strip(), parse_mode="Markdown")
 
@@ -454,14 +538,17 @@ def main():
     app.add_handler(CommandHandler("summary", summary_command))
     app.add_handler(CommandHandler("weekstats", week_stats_command))
     app.add_handler(CommandHandler("monthstats", month_stats_command))
+    app.add_handler(CommandHandler("today", today_command))
     app.add_handler(CommandHandler("myroutine", my_routine_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     # 스케줄 등록 (KST 기준)
     morning_time = datetime.time(hour=8, minute=0, tzinfo=KST)
     evening_time = datetime.time(hour=21, minute=0, tzinfo=KST)
+    lunch_time = datetime.time(hour=12, minute=0, tzinfo=KST)
     app.job_queue.run_daily(send_morning_alarm, time=morning_time)
     app.job_queue.run_daily(send_evening_alarm, time=evening_time)
+    app.job_queue.run_daily(send_lunch_reminder, time=lunch_time)
 
     logger.info("Bot started. Polling...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
