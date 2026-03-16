@@ -129,9 +129,9 @@ def _parse_selection_reply(text: str, items: list[str]) -> list[str]:
 
 
 def _dm_add_hint(context: ContextTypes.DEFAULT_TYPE) -> str:
-    """1:1에서 /add 하라는 안내 문구."""
+    """1:1에서 /add 하라는 안내 문구. (Markdown 포맷 없이 순수 텍스트로 반환)"""
     return (
-        "루틴 입력은 봇과 *1:1 대화*에서 해 주세요.\n"
+        "루틴 입력은 봇과 1:1 대화에서 해 주세요.\n"
         "아래 링크에서 /add 를 입력하세요.\n"
         f"{_bot_tme_link()}"
     )
@@ -150,12 +150,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     today_str = datetime.datetime.now(KST).strftime("%Y-%m-%d")
     yesterday = (datetime.datetime.now(KST) - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
 
-    # 단체방에서는 루틴 저장/선택 없이 1:1 유도만
+    # 단체방에서는 루틴 저장/선택 없이 1:1 유도만 (포맷팅 없이 일반 텍스트 전송)
     if chat and chat.type in ("group", "supergroup"):
         sel = await db.get_selection_prompt(reply_to_id)
         prompt_type = await db.get_prompt_type(reply_to_id)
         if sel or prompt_type:
-            await msg.reply_text(_dm_add_hint(context), parse_mode="Markdown")
+            await msg.reply_text(_dm_add_hint(context))
             return
 
     # 1) 어제 루틴 선택용 메시지에 대한 답장인지 확인
@@ -277,11 +277,10 @@ async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not chat or not user:
         return
 
-    # 단체방에서는 루틴 입력을 하지 않고 1:1 대화로 유도
+    # 단체방에서는 루틴 입력을 하지 않고 1:1 대화로 유도 (포맷팅 없이 일반 텍스트 전송)
     if chat.type in ("group", "supergroup"):
         await update.message.reply_text(
-            _dm_add_hint(context) + "\n\n입력·저장이 끝나면 개인 대화창에서 안내해 드려요.",
-            parse_mode="Markdown",
+            _dm_add_hint(context) + "\n\n입력·저장이 끝나면 개인 대화창에서 안내해 드려요."
         )
         return
 
