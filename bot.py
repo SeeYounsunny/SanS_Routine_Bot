@@ -122,9 +122,16 @@ def _parse_selection_reply(text: str, items: list[str]) -> list[str]:
     return result
 
 
+# 1:1 안내에 쓸 봇 유저네임. Railway Variables의 TELEGRAM_BOT_USERNAME 사용, 없거나 오타면 이 기본값
+BOT_USERNAME_DEFAULT = "sans_routine_bot"
+
+
 def _dm_add_hint(context: ContextTypes.DEFAULT_TYPE) -> str:
-    """1:1에서 /add 하라는 안내 문구. @sans_routine_bot 으로 이동 후 /add 입력."""
-    return "루틴 입력은 봇과 *1:1 대화*에서 해 주세요.\n@sans_routine_bot 으로 이동해서 /add 를 입력하세요."
+    """1:1에서 /add 하라는 안내 문구. TELEGRAM_BOT_USERNAME 사용, 없으면 기본값."""
+    raw = (os.environ.get("TELEGRAM_BOT_USERNAME") or BOT_USERNAME_DEFAULT).strip()
+    # 오타 방지: 올바른 값이 아니면 기본값 사용 (예: sansroutinebot → sans_routine_bot)
+    username = raw if raw == BOT_USERNAME_DEFAULT else BOT_USERNAME_DEFAULT
+    return f"루틴 입력은 봇과 *1:1 대화*에서 해 주세요.\n`@{username}` 으로 이동해서 /add 를 입력하세요."
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
