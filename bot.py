@@ -261,13 +261,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• 매일 아침 8시·저녁 9시 알림이 단체방에 올라와요.\n"
         f"• 루틴 입력: 아래 링크 클릭해서 각자 입력해 주세요.\n{_bot_tme_link()}\n\n"
         "자세한 사용법은 /help 를 입력하세요. 😊",
-        parse_mode="Markdown",
     )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """사용법 매뉴얼 안내"""
-    await update.message.reply_text(HELP_TEXT, parse_mode="Markdown")
+    await update.message.reply_text(HELP_TEXT)
 
 
 async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
