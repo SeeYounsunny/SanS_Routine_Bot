@@ -122,13 +122,9 @@ def _parse_selection_reply(text: str, items: list[str]) -> list[str]:
     return result
 
 
-# 1:1 안내 링크는 항상 이 유저네임 사용 (Railway 등 env 오타 방지)
-BOT_USERNAME_FOR_LINK = "sans_routine_bot"
-
-
 def _dm_add_hint(context: ContextTypes.DEFAULT_TYPE) -> str:
-    """1:1에서 /add 하라는 안내 문구 (봇 링크 포함). 항상 sans_routine_bot 링크 사용."""
-    return f"루틴 입력은 봇과 *1:1 대화*에서 해 주세요.\nhttps://t.me/{BOT_USERNAME_FOR_LINK} 에서 /add 를 입력하세요."
+    """1:1에서 /add 하라는 안내 문구. @sans_routine_bot 으로 이동 후 /add 입력."""
+    return "루틴 입력은 봇과 *1:1 대화*에서 해 주세요.\n@sans_routine_bot 으로 이동해서 /add 를 입력하세요."
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
