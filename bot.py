@@ -224,14 +224,43 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # 커맨드 핸들러
 # ─────────────────────────────────────────
 
+HELP_TEXT = """
+📖 *SanS 루틴 봇 사용법*
+
+*▶ 루틴 입력*
+• 루틴은 *봇과 1:1 대화*에서만 입력해 주세요.
+• *봇과 1:1* 채팅을 연 뒤 `/add` 를 입력하세요.
+• 어제 루틴이 있으면 번호 목록이 나옵니다. 기존 건은 *번호를 쉼표(,)*로 구분, 새로 넣을 건 *쉼표 뒤*에 적고, 그 메시지에 *답장*으로 보내면 됩니다. (예: 1,3,요가 10분)
+• 단체방에서는 아침 8시·저녁 9시 알림, 12시 점심 리마인드가 올라옵니다.
+
+*▶ 명령어*
+/add — 오늘 루틴 추가 (1:1에서)
+/today — 오늘 내가 입력한 루틴 보기
+/myroutine — 내가 자주 쓰는 루틴 TOP 5
+/delete — 오늘 입력한 루틴 전부 삭제
+/search YYYY-MM-DD — 해당 날짜 내 루틴 조회
+/summary — 오늘 전체 루틴 AI 요약
+/weekstats — 지난 7일 통계
+/monthstats — 지난 30일 통계
+/chatid — 이 채팅방 ID 확인 (설정용)
+/help — 이 사용법 다시 보기
+""".strip()
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 루틴 봇에 오신 걸 환영합니다!\n\n"
         "📌 사용법\n"
-        "• 매일 아침 8시 알람 → 답장으로 오늘 루틴 작성\n"
-        "• 매일 저녁 9시 알람 → 아직 못 쓴 사람을 위한 리마인드 알림\n\n"
-        "오늘 루틴을 추가하려면 /add 를 입력해서 시작하세요. 😊",
+        "• 매일 아침 8시·저녁 9시 알림이 단체방에 올라와요.\n"
+        "• 루틴 입력은 *봇과 1:1 대화*에서 /add 로 해 주세요.\n\n"
+        "자세한 사용법은 /help 를 입력하세요. 😊",
+        parse_mode="Markdown",
     )
+
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """사용법 매뉴얼 안내"""
+    await update.message.reply_text(HELP_TEXT, parse_mode="Markdown")
 
 
 async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -530,6 +559,7 @@ def main():
 
     # 커맨드 등록
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("add", add_command))
     app.add_handler(CommandHandler("delete", delete_command))
     app.add_handler(CommandHandler("reset", reset_command))
