@@ -27,16 +27,24 @@ db = Database()
 # 예약 알람
 # ─────────────────────────────────────────
 
+def _bot_username_for_link() -> str:
+    """1:1 이동 링크용 봇 유저네임. TELEGRAM_BOT_USERNAME 사용, 없거나 오타면 기본값."""
+    raw = (os.environ.get("TELEGRAM_BOT_USERNAME") or BOT_USERNAME_DEFAULT).strip()
+    return raw if raw == BOT_USERNAME_DEFAULT else BOT_USERNAME_DEFAULT
+
+
 async def send_morning_alarm(context: ContextTypes.DEFAULT_TYPE):
     chat_id = os.environ["TELEGRAM_CHAT_ID"]
     today = datetime.datetime.now(KST).strftime("%m/%d")
+    username = _bot_username_for_link()
+    link = f"https://t.me/{username}"
 
     msg = await context.bot.send_message(
         chat_id=chat_id,
         text=(
             f"🌅 *오늘 루틴을 적어볼까요?*\n\n"
             f"*{today}* 오늘 하루에 실천하고 싶은/실천한 루틴을 자유롭게 적어주세요. 💪\n\n"
-            f"봇과 *1:1 대화*에서 /add 를 입력해 오늘 루틴을 적어 주세요."
+            f"아래 링크 클릭해서 각자 루틴 입력해 주세요.\n{link}"
         ),
         parse_mode="Markdown",
     )
@@ -47,13 +55,15 @@ async def send_morning_alarm(context: ContextTypes.DEFAULT_TYPE):
 async def send_evening_alarm(context: ContextTypes.DEFAULT_TYPE):
     chat_id = os.environ["TELEGRAM_CHAT_ID"]
     today = datetime.datetime.now(KST).strftime("%m/%d")
+    username = _bot_username_for_link()
+    link = f"https://t.me/{username}"
 
     msg = await context.bot.send_message(
         chat_id=chat_id,
         text=(
             f"🌙 *오늘 루틴, 마무리해볼까요?*\n\n"
             f"*{today}* 아직 오늘 루틴을 적지 않았다면 지금 적어주세요. ✨\n\n"
-            f"봇과 *1:1 대화*에서 /add 를 입력해 오늘 루틴을 적어 주세요."
+            f"아래 링크 클릭해서 각자 루틴 입력해 주세요.\n{link}"
         ),
         parse_mode="Markdown",
     )
@@ -127,11 +137,9 @@ BOT_USERNAME_DEFAULT = "sans_routine_bot"
 
 
 def _dm_add_hint(context: ContextTypes.DEFAULT_TYPE) -> str:
-    """1:1에서 /add 하라는 안내 문구. TELEGRAM_BOT_USERNAME 사용, 없으면 기본값."""
-    raw = (os.environ.get("TELEGRAM_BOT_USERNAME") or BOT_USERNAME_DEFAULT).strip()
-    # 오타 방지: 올바른 값이 아니면 기본값 사용 (예: sansroutinebot → sans_routine_bot)
-    username = raw if raw == BOT_USERNAME_DEFAULT else BOT_USERNAME_DEFAULT
-    return f"루틴 입력은 봇과 *1:1 대화*에서 해 주세요.\n`@{username}` 으로 이동해서 /add 를 입력하세요."
+    """1:1에서 /add 하라는 안내 문구. 링크 클릭 시 봇 대화로 이동."""
+    username = _bot_username_for_link()
+    return f"루틴 입력은 봇과 *1:1 대화*에서 해 주세요.\n아래 링크에서 /add 를 입력하세요.\nhttps://t.me/{username}"
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
