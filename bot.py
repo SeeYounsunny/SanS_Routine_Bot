@@ -242,6 +242,7 @@ HELP_TEXT = """
 /myroutine — 내가 자주 쓰는 루틴 TOP 5
 /delete — 오늘 입력한 루틴 전부 삭제
 /search YYYY-MM-DD — 해당 날짜 내 루틴 조회
+/list — 오늘 기록된 전체 루틴 목록 (이름별)
 /summary — 오늘 전체 루틴 AI 요약
 /weekstats — 지난 7일 통계
 /monthstats — 지난 30일 통계
@@ -358,6 +359,27 @@ async def chatid_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"오류 발생: {e}")
 
 
+async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """오늘 현재까지 기록된 모든 사람의 루틴을 이름별로 나열 (요약 없음)"""
+    today_str = datetime.datetime.now(KST).strftime("%Y-%m-%d")
+    routines = await db.get_today_routines(today_str)
+    if not routines:
+        await update.message.reply_text("📭 오늘 기록된 루틴이 없어요.")
+        return
+    by_user: dict[str, list[str]] = {}
+    for r in routines:
+        name = (r.get("user_name") or "").strip() or "이름없음"
+        content = (r.get("content") or "").strip()
+        if not content:
+            continue
+        if name not in by_user:
+            by_user[name] = []
+        by_user[name].append(content)
+    lines = [f"{i}. {name}: {', '.join(contents)}" for i, (name, contents) in enumerate(sorted(by_user.items()), start=1)]
+    text = "\n".join(lines)
+    await update.message.reply_text(text)
+
+
 async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not os.environ.get("ANTHROPIC_API_KEY"):
         await update.message.reply_text(
@@ -461,21 +483,10 @@ async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📭 오늘 기록된 루틴이 아직 없어요.")
         return
 
-    by_type = {"morning": [], "evening": []}
-    for r in routines:
-        t = r.get("routine_type") or "morning"
-        if t not in by_type:
-            by_type[t] = []
-        by_type[t].append((r.get("content") or "").strip())
-
+    contents = [(r.get("content") or "").strip() for r in routines if (r.get("content") or "").strip()]
     today_label = datetime.datetime.now(KST).strftime("%m/%d")
-    text = f"📋 *오늘({today_label}) 내 루틴*\n\n"
-    if by_type["morning"]:
-        text += f"🌅 *오전 기록*\n{', '.join(by_type['morning'])}\n\n"
-    if by_type["evening"]:
-        text += f"🌙 *저녁 기록*\n{', '.join(by_type['evening'])}\n\n"
-
-    await update.message.reply_text(text.strip(), parse_mode="Markdown")
+    text = f"📋 오늘({today_label}) 내 루틴\n\n{', '.join(contents)}"
+    await update.message.reply_text(text)
 
 
 async def my_routine_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -524,19 +535,10 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not routines:
         await update.message.reply_text(f"📭 {date_str}에 기록된 루틴이 없어요.")
         return
-    by_type = {"morning": [], "evening": []}
-    for r in routines:
-        t = r.get("routine_type") or "morning"
-        if t not in by_type:
-            by_type[t] = []
-        by_type[t].append((r.get("content") or "").strip())
+    contents = [(r.get("content") or "").strip() for r in routines if (r.get("content") or "").strip()]
     date_label = f"{date_str[5:7]}/{date_str[8:]}"
-    text = f"📋 *{user.full_name}님의 {date_label} 루틴 기록*\n\n"
-    if by_type["morning"]:
-        text += f"🌅 *오전 기록*\n{', '.join(by_type['morning'])}\n\n"
-    if by_type["evening"]:
-        text += f"🌙 *저녁 기록*\n{', '.join(by_type['evening'])}\n\n"
-    await update.message.reply_text(text.strip(), parse_mode="Markdown")
+    text = f"📋 {user.full_name}님의 {date_label} 루틴\n\n{', '.join(contents)}"
+    await update.message.reply_text(text)
 
 
 # ─────────────────────────────────────────
@@ -566,6 +568,7 @@ def main():
     app.add_handler(CommandHandler("reset", reset_command))
     app.add_handler(CommandHandler("search", search_command))
     app.add_handler(CommandHandler("chatid", chatid_command))
+    app.add_handler(CommandHandler("list", list_command))
     app.add_handler(CommandHandler("summary", summary_command))
     app.add_handler(CommandHandler("weekstats", week_stats_command))
     app.add_handler(CommandHandler("monthstats", month_stats_command))
