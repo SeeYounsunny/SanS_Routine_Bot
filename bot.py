@@ -133,6 +133,29 @@ def _dm_add_hint(context: ContextTypes.DEFAULT_TYPE) -> str:
     )
 
 
+def _get_allowed_group_chat_id() -> int | None:
+    raw = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+async def _is_allowed_user(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
+    """우리 단체방 멤버만 DM 루틴 입력 허용."""
+    group_chat_id = _get_allowed_group_chat_id()
+    if group_chat_id is None:
+        return True
+    try:
+        member = await context.bot.get_chat_member(chat_id=group_chat_id, user_id=user_id)
+        return getattr(member, "status", None) in ("creator", "administrator", "member")
+    except Exception:
+        logger.exception("Failed to check chat member for allowlist")
+        return False
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """알림에 답장하면 루틴 저장. 단체방에서는 저장하지 않고 1:1 유도. 개인채팅에서만 어제 루틴 선택·저장."""
     msg = update.message
@@ -152,6 +175,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         prompt_type = await db.get_prompt_type(reply_to_id)
         if sel or prompt_type:
             await msg.reply_text(_dm_add_hint(context))
+            return
+    elif chat and chat.type == "private":
+        if not await _is_allowed_user(context, user.id):
+            await msg.reply_text("이 봇은 SanS 단체방 멤버만 루틴 입력이 가능해요.")
             return
 
     # 1) 어제 루틴 선택용 메시지에 대한 답장인지 확인
@@ -279,6 +306,10 @@ async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _dm_add_hint(context) + "\n\n입력·저장이 끝나면 개인 대화창에서 안내해 드려요."
         )
         return
+    if chat.type == "private":
+        if not await _is_allowed_user(context, user.id):
+            await update.message.reply_text("이 봇은 SanS 단체방 멤버만 루틴 입력이 가능해요.")
+            return
 
     today_label = datetime.datetime.now(KST).strftime("%m/%d")
     yesterday = (datetime.datetime.now(KST) - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
