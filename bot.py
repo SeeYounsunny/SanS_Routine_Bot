@@ -66,7 +66,7 @@ async def send_evening_alarm(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def send_lunch_reminder(context: ContextTypes.DEFAULT_TYPE):
-    """점심시간 단체방 리마인드: 오늘 오전까지 입력한 사람별 루틴 내용 한 번 공지"""
+    """점심시간 단체방 리마인드: 오늘 입력한 사람별 루틴 내용 한 번 공지"""
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
     if not chat_id:
         return
@@ -98,7 +98,7 @@ async def send_lunch_reminder(context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(
             chat_id=chat_id,
             text=(
-                "☀️ 점심 리마인드 — 오늘 오전까지 입력한 루틴\n\n"
+                "☀️ 점심 리마인드 — 오늘 입력한 루틴\n\n"
                 + "\n".join(lines)
             ),
         )
@@ -128,7 +128,7 @@ def _dm_add_hint(context: ContextTypes.DEFAULT_TYPE) -> str:
     """1:1에서 /add 하라는 안내 문구. (Markdown 포맷 없이 순수 텍스트로 반환)"""
     return (
         "루틴 입력은 봇과 1:1 대화에서 해 주세요.\n"
-        "아래 링크에서 /add 를 입력하세요.\n"
+        "아래 링크에서 /add 를 입력한 후, 봇의 메세지의 답장으로 적어주세요.\n"
         f"{_bot_tme_link()}"
     )
 
@@ -257,7 +257,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📌 사용법\n"
         "• 매일 아침 8시·저녁 9시 알림이 단체방에 올라와요.\n"
         f"• 루틴 입력: 아래 링크 클릭해서 각자 입력해 주세요.\n{_bot_tme_link()}\n\n"
-        "자세한 사용법은 /help 를 입력하세요. 😊",
+        "자세한 사용법은 루틴 봇 대화창에서 /help 를 입력하세요. 😊",
     )
 
 
