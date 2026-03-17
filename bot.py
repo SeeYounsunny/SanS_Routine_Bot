@@ -128,7 +128,7 @@ def _dm_add_hint(context: ContextTypes.DEFAULT_TYPE) -> str:
     """1:1에서 /add 하라는 안내 문구. (Markdown 포맷 없이 순수 텍스트로 반환)"""
     return (
         "루틴 입력은 봇과 1:1 대화에서 해 주세요.\n"
-        "아래 링크에서 /add 를 입력한 후, 봇의 메세지의 답장으로 적어주세요.\n"
+        "아래 링크에서 /add 를 입력한 후, 봇의 메시지에 답장으로 적어 주세요.\n"
         f"{_bot_tme_link()}"
     )
 
