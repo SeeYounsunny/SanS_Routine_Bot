@@ -553,9 +553,13 @@ async def post_init(application: Application):
 def main():
     token = os.environ["TELEGRAM_BOT_TOKEN"]
 
+    # 요청 타임아웃 명시 (배포 시 종료 단계에서 getUpdates Conflict 로그가 나올 수 있음 — 새 인스턴스가 이미 폴링 중이면 정상)
     app = (
         Application.builder()
         .token(token)
+        .connect_timeout(10.0)
+        .read_timeout(10.0)
+        .write_timeout(10.0)
         .post_init(post_init)
         .build()
     )
