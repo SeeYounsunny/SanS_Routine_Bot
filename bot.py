@@ -178,7 +178,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
     elif chat and chat.type == "private":
         if not await _is_allowed_user(context, user.id):
-            await msg.reply_text("이 봇은 SanS 단체방 멤버만 루틴 입력이 가능해요.")
+            await msg.reply_text("이 봇은 SanS 1조 단체방 멤버만 루틴 입력이 가능해요.")
             return
 
     # 1) 어제 루틴 선택용 메시지에 대한 답장인지 확인
@@ -308,7 +308,7 @@ async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if chat.type == "private":
         if not await _is_allowed_user(context, user.id):
-            await update.message.reply_text("이 봇은 SanS 단체방 멤버만 루틴 입력이 가능해요.")
+            await update.message.reply_text("이 봇은 SanS 1조 단체방 멤버만 루틴 입력이 가능해요.")
             return
 
     today_label = datetime.datetime.now(KST).strftime("%m/%d")
