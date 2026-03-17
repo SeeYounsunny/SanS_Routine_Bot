@@ -40,11 +40,10 @@ async def send_morning_alarm(context: ContextTypes.DEFAULT_TYPE):
     msg = await context.bot.send_message(
         chat_id=chat_id,
         text=(
-            f"🌅 *오늘 루틴을 적어볼까요?*\n\n"
-            f"*{today}* 오늘 하루에 실천하고 싶은/실천한 루틴을 자유롭게 적어주세요. 💪\n\n"
+            f"🌅 오늘 루틴을 적어볼까요?\n\n"
+            f"{today} 오늘 하루에 실천하고 싶은/실천한 루틴을 자유롭게 적어주세요. 💪\n\n"
             f"아래 링크 클릭해서 각자 루틴 입력해 주세요.\n{_bot_tme_link()}"
         ),
-        parse_mode="Markdown",
     )
     await db.save_prompt_message(msg.message_id, "morning", today)
     logger.info(f"Morning alarm sent | message_id={msg.message_id}")
@@ -57,11 +56,10 @@ async def send_evening_alarm(context: ContextTypes.DEFAULT_TYPE):
     msg = await context.bot.send_message(
         chat_id=chat_id,
         text=(
-            f"🌙 *오늘 루틴, 마무리해볼까요?*\n\n"
-            f"*{today}* 아직 오늘 루틴을 적지 않았다면 지금 적어주세요. ✨\n\n"
+            f"🌙 오늘 루틴, 마무리해볼까요?\n\n"
+            f"{today} 아직 오늘 루틴을 적지 않았다면 지금 적어주세요. ✨\n\n"
             f"아래 링크 클릭해서 각자 루틴 입력해 주세요.\n{_bot_tme_link()}"
         ),
-        parse_mode="Markdown",
     )
     await db.save_prompt_message(msg.message_id, "evening", today)
     logger.info(f"Evening alarm sent | message_id={msg.message_id}")
@@ -88,23 +86,21 @@ async def send_lunch_reminder(context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(
             chat_id=chat_id,
             text=(
-                "☀️ *점심 리마인드*\n\n"
+                "☀️ 점심 리마인드\n\n"
                 "아직 오늘 루틴을 입력한 사람이 없어요.\n"
                 "봇과 1:1 대화에서 /add 를 입력해 주세요! 💪"
             ),
-            parse_mode="Markdown",
         )
     else:
         lines = []
         for name, contents in sorted(by_user.items()):
-            lines.append(f"• *{name}*: {', '.join(contents)}")
+            lines.append(f"• {name}: {', '.join(contents)}")
         await context.bot.send_message(
             chat_id=chat_id,
             text=(
-                "☀️ *점심 리마인드* — 오늘 오전까지 입력한 루틴\n\n"
+                "☀️ 점심 리마인드 — 오늘 오전까지 입력한 루틴\n\n"
                 + "\n".join(lines)
             ),
-            parse_mode="Markdown",
         )
     logger.info("Lunch reminder sent")
 
