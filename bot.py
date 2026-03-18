@@ -100,6 +100,9 @@ async def send_lunch_reminder(context: ContextTypes.DEFAULT_TYPE):
             text=(
                 "☀️ 점심 리마인드 — 오늘 입력한 루틴\n\n"
                 + "\n".join(lines)
+                + "\n\n"
+                + "아직 입력 안 하신 분들은 지금 기록해주세요.\n"
+                + f"{_bot_tme_link()}"
             ),
         )
     logger.info("Lunch reminder sent")
