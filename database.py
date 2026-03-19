@@ -58,6 +58,28 @@ class Database:
                     )
                     """
                 )
+                await conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS attendance_sessions (
+                        session_date TEXT PRIMARY KEY,
+                        max_participants INTEGER NOT NULL,
+                        status_message_chat_id BIGINT,
+                        status_message_id BIGINT,
+                        started_at TIMESTAMPTZ DEFAULT NOW()
+                    )
+                    """
+                )
+                await conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS attendance_records (
+                        session_date TEXT NOT NULL,
+                        user_id BIGINT NOT NULL,
+                        user_name TEXT NOT NULL,
+                        checked_at TIMESTAMPTZ DEFAULT NOW(),
+                        PRIMARY KEY (session_date, user_id)
+                    )
+                    """
+                )
             finally:
                 await conn.close()
             return
@@ -104,6 +126,28 @@ class Database:
                     user_id      INTEGER PRIMARY KEY,
                     display_name TEXT NOT NULL,
                     updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS attendance_sessions (
+                    session_date TEXT PRIMARY KEY,
+                    max_participants INTEGER NOT NULL,
+                    status_message_chat_id INTEGER,
+                    status_message_id INTEGER,
+                    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS attendance_records (
+                    session_date TEXT NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    user_name TEXT NOT NULL,
+                    checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (session_date, user_id)
                 )
                 """
             )
@@ -169,6 +213,182 @@ class Database:
             ) as cur:
                 rows = await cur.fetchall()
                 return {int(r["user_id"]): (r["display_name"] or "") for r in rows}
+
+    # ── 출석체크 ──────────────────────────────────────────────
+
+    async def attendance_get_session(self, session_date: str) -> dict | None:
+        if self.use_postgres:
+            conn = await asyncpg.connect(DATABASE_URL)
+            try:
+                row = await conn.fetchrow(
+                    """
+                    SELECT session_date, max_participants, status_message_chat_id, status_message_id, started_at
+                    FROM attendance_sessions
+                    WHERE session_date = $1
+                    """,
+                    session_date,
+                )
+                return dict(row) if row else None
+            finally:
+                await conn.close()
+
+        async with aiosqlite.connect(DB_PATH) as conn:
+            conn.row_factory = aiosqlite.Row
+            async with conn.execute(
+                """
+                SELECT session_date, max_participants, status_message_chat_id, status_message_id, started_at
+                FROM attendance_sessions
+                WHERE session_date = ?
+                """,
+                (session_date,),
+            ) as cur:
+                row = await cur.fetchone()
+                return dict(row) if row else None
+
+    async def attendance_create_session(self, session_date: str, max_participants: int) -> bool:
+        """세션 생성. 이미 있으면 False 반환."""
+        if self.use_postgres:
+            conn = await asyncpg.connect(DATABASE_URL)
+            try:
+                res = await conn.execute(
+                    """
+                    INSERT INTO attendance_sessions (session_date, max_participants)
+                    VALUES ($1, $2)
+                    ON CONFLICT (session_date) DO NOTHING
+                    """,
+                    session_date,
+                    max_participants,
+                )
+                # asyncpg execute returns like "INSERT 0 1"
+                return res.endswith("1")
+            finally:
+                await conn.close()
+
+        async with aiosqlite.connect(DB_PATH) as conn:
+            cur = await conn.execute(
+                """
+                INSERT OR IGNORE INTO attendance_sessions (session_date, max_participants)
+                VALUES (?, ?)
+                """,
+                (session_date, max_participants),
+            )
+            await conn.commit()
+            return cur.rowcount == 1
+
+    async def attendance_set_status_message(
+        self,
+        session_date: str,
+        chat_id: int,
+        message_id: int,
+    ) -> None:
+        if self.use_postgres:
+            conn = await asyncpg.connect(DATABASE_URL)
+            try:
+                await conn.execute(
+                    """
+                    UPDATE attendance_sessions
+                    SET status_message_chat_id = $1, status_message_id = $2
+                    WHERE session_date = $3
+                    """,
+                    chat_id,
+                    message_id,
+                    session_date,
+                )
+            finally:
+                await conn.close()
+            return
+
+        async with aiosqlite.connect(DB_PATH) as conn:
+            await conn.execute(
+                """
+                UPDATE attendance_sessions
+                SET status_message_chat_id = ?, status_message_id = ?
+                WHERE session_date = ?
+                """,
+                (chat_id, message_id, session_date),
+            )
+            await conn.commit()
+
+    async def attendance_get_count(self, session_date: str) -> int:
+        if self.use_postgres:
+            conn = await asyncpg.connect(DATABASE_URL)
+            try:
+                row = await conn.fetchrow(
+                    "SELECT COUNT(*) AS cnt FROM attendance_records WHERE session_date = $1",
+                    session_date,
+                )
+                return int(row["cnt"]) if row else 0
+            finally:
+                await conn.close()
+
+        async with aiosqlite.connect(DB_PATH) as conn:
+            async with conn.execute(
+                "SELECT COUNT(*) AS cnt FROM attendance_records WHERE session_date = ?",
+                (session_date,),
+            ) as cur:
+                row = await cur.fetchone()
+                return int(row[0]) if row else 0
+
+    async def attendance_get_records(self, session_date: str) -> list[dict]:
+        if self.use_postgres:
+            conn = await asyncpg.connect(DATABASE_URL)
+            try:
+                rows = await conn.fetch(
+                    """
+                    SELECT user_id, user_name, checked_at
+                    FROM attendance_records
+                    WHERE session_date = $1
+                    ORDER BY checked_at ASC
+                    """,
+                    session_date,
+                )
+                return [dict(r) for r in rows]
+            finally:
+                await conn.close()
+
+        async with aiosqlite.connect(DB_PATH) as conn:
+            conn.row_factory = aiosqlite.Row
+            async with conn.execute(
+                """
+                SELECT user_id, user_name, checked_at
+                FROM attendance_records
+                WHERE session_date = ?
+                ORDER BY checked_at ASC
+                """,
+                (session_date,),
+            ) as cur:
+                rows = await cur.fetchall()
+                return [dict(r) for r in rows]
+
+    async def attendance_add_record(self, session_date: str, user_id: int, user_name: str) -> bool:
+        """레코드 추가. 중복이면 False."""
+        if self.use_postgres:
+            conn = await asyncpg.connect(DATABASE_URL)
+            try:
+                res = await conn.execute(
+                    """
+                    INSERT INTO attendance_records (session_date, user_id, user_name)
+                    VALUES ($1, $2, $3)
+                    ON CONFLICT (session_date, user_id) DO NOTHING
+                    """,
+                    session_date,
+                    user_id,
+                    user_name,
+                )
+                return res.endswith("1")
+            finally:
+                await conn.close()
+
+        async with aiosqlite.connect(DB_PATH) as conn:
+            cur = await conn.execute(
+                """
+                INSERT OR IGNORE INTO attendance_records (session_date, user_id, user_name)
+                VALUES (?, ?, ?)
+                """,
+                (session_date, user_id, user_name),
+            )
+            await conn.commit()
+            return cur.rowcount == 1
 
     async def save_prompt_message(self, message_id: int, prompt_type: str, date: str):
         if self.use_postgres:

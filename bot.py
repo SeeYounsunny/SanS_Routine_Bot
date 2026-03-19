@@ -3,15 +3,17 @@ import json
 import logging
 import datetime
 import pytz
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     MessageHandler,
     ContextTypes,
     filters,
 )
 from database import Database
+import attendance
 from ai_summary import generate_summary
 
 logging.basicConfig(
@@ -22,6 +24,17 @@ logger = logging.getLogger(__name__)
 
 KST = pytz.timezone("Asia/Seoul")
 db = Database()
+
+# evening 알람은 "내일부터" 시작하도록, 최초 스케줄 실행 전 오늘/내일 기준을 제어함
+EVENING_ALARM_START_DATE: str | None = None
+
+# 출석체크 설정 (환경변수로 조절 가능)
+ATTENDANCE_MAX_PARTICIPANTS = int(os.environ.get("ATTENDANCE_MAX_PARTICIPANTS", "24"))
+# 정규 시작: 20:50, 허용 시작: 10분 일찍(20:40)
+ATTENDANCE_ALLOW_EARLY_MINUTES = int(os.environ.get("ATTENDANCE_ALLOW_EARLY_MINUTES", "10"))
+ATTENDANCE_START_TIME = datetime.time(hour=20, minute=50, tzinfo=KST)
+ATTENDANCE_END_TIME = datetime.time(hour=23, minute=0, tzinfo=KST)
+
 
 # ─────────────────────────────────────────
 # 예약 알람
@@ -51,6 +64,11 @@ async def send_morning_alarm(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def send_evening_alarm(context: ContextTypes.DEFAULT_TYPE):
+    # "내일부터" 시작: 최초 실행일(today)은 스킵하고 다음날부터 동작
+    if EVENING_ALARM_START_DATE:
+        today = datetime.datetime.now(KST).strftime("%Y-%m-%d")
+        if today < EVENING_ALARM_START_DATE:
+            return
     chat_id = os.environ["TELEGRAM_CHAT_ID"]
     today_label = datetime.datetime.now(KST).strftime("%m/%d")
     today_str = datetime.datetime.now(KST).strftime("%Y-%m-%d")
@@ -116,6 +134,268 @@ async def send_lunch_reminder(context: ContextTypes.DEFAULT_TYPE):
             ),
         )
     logger.info("Lunch reminder sent")
+
+
+async def _delete_message_job(context: ContextTypes.DEFAULT_TYPE):
+    data = context.job.data if context.job else {}
+    chat_id = data.get("chat_id")
+    message_id = data.get("message_id")
+    if chat_id is None or message_id is None:
+        return
+    try:
+        await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+    except Exception:
+        # 삭제 실패해도 출석/루틴 기능 동작은 지속
+        logger.exception("Failed to delete ephemeral message")
+
+
+async def _send_ephemeral_message(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    text: str,
+    ttl_seconds: int = 60,
+):
+    msg = await context.bot.send_message(chat_id=chat_id, text=text)
+    context.job_queue.run_once(
+        _delete_message_job,
+        when=ttl_seconds,
+        data={"chat_id": chat_id, "message_id": msg.message_id},
+    )
+
+
+def _attendance_callback_data(session_date: str) -> str:
+    return f"attendance:{session_date}"
+
+
+def _parse_attendance_callback_data(data: str) -> str | None:
+    if not data or not data.startswith("attendance:"):
+        return None
+    return data.split(":", 1)[1].strip() or None
+
+
+def _get_attendance_time_window(session_date: str):
+    """허용 시간 계산. session_date는 YYYY-MM-DD (KST 기준)."""
+    base = datetime.datetime.strptime(session_date, "%Y-%m-%d").replace(tzinfo=KST)
+    allow_start = (base + datetime.timedelta(minutes=-ATTENDANCE_ALLOW_EARLY_MINUTES)).time()
+    # 위 줄은 time()만 취하는데 기준이 base의 00:00이라 의도대로 동작하지 않음.
+    # 아래에서 분 단위 오프셋으로 계산해서 정확히 맞춤.
+    start_dt = base.replace(
+        hour=ATTENDANCE_START_TIME.hour,
+        minute=ATTENDANCE_START_TIME.minute,
+        second=0,
+        microsecond=0,
+    ) - datetime.timedelta(minutes=ATTENDANCE_ALLOW_EARLY_MINUTES)
+    end_dt = base.replace(
+        hour=ATTENDANCE_END_TIME.hour,
+        minute=ATTENDANCE_END_TIME.minute,
+        second=0,
+        microsecond=0,
+    )
+    return start_dt, end_dt
+
+
+def _attendance_allowed(now_kst: datetime.datetime, session_date: str) -> bool:
+    start_dt, end_dt = _get_attendance_time_window(session_date)
+    return start_dt <= now_kst < end_dt
+
+
+def _attendance_rate_percent(checked: int, max_participants: int) -> int:
+    if max_participants <= 0:
+        return 0
+    return int(checked * 100 / max_participants)
+
+
+def _attendance_status_text(display_lines: list[str], rate_percent: int) -> str:
+    header = f"📋 출석 현황 (출석율 {rate_percent}%)"
+    if not display_lines:
+        return header
+    return header + "\n\n" + "\n".join(display_lines)
+
+
+def _attendance_keyboard(session_date: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(text="출석 버튼", callback_data=_attendance_callback_data(session_date))]]
+    )
+
+
+async def send_attendance_start(context: ContextTypes.DEFAULT_TYPE):
+    """매주 일요일 20:50에 출석체크 세션 시작 메시지를 전송."""
+    if datetime.datetime.now(KST).weekday() != 6:
+        return
+
+    chat_id_raw = os.environ.get("TELEGRAM_CHAT_ID")
+    if not chat_id_raw:
+        return
+    chat_id = int(chat_id_raw)
+
+    now = datetime.datetime.now(KST)
+    session_date = now.strftime("%Y-%m-%d")  # 해당 일요일(세션 기준)
+
+    # 세션이 이미 존재하면 재전송하지 않음
+    created = await db.attendance_create_session(session_date=session_date, max_participants=ATTENDANCE_MAX_PARTICIPANTS)
+    if not created:
+        return
+
+    await _send_ephemeral_message(
+        context,
+        chat_id=chat_id,
+        text=(
+            "📌 [출석체크 시작]\n"
+            f"금일 세션 출석체크가 시작되었습니다. (오후 {ATTENDANCE_START_TIME.strftime('%H:%M')} ~ {ATTENDANCE_END_TIME.strftime('%H:%M')})\n"
+            "아래 출석 버튼을 눌러 출석해 주세요!"
+        ),
+        ttl_seconds=90,
+    )
+
+    initial_rate = 0
+    status_text = _attendance_status_text([], initial_rate)
+    sent = await context.bot.send_message(
+        chat_id=chat_id,
+        text=status_text,
+        reply_markup=_attendance_keyboard(session_date),
+    )
+    await db.attendance_set_status_message(
+        session_date=session_date,
+        chat_id=chat_id,
+        message_id=sent.message_id,
+    )
+    logger.info("Attendance session started | session_date=%s", session_date)
+
+
+async def attendance_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """출석 버튼 클릭 처리 (CallbackQuery)."""
+    query = update.callback_query
+    if not query:
+        return
+
+    data = query.data or ""
+    session_date = _parse_attendance_callback_data(data)
+    if not session_date:
+        await query.answer()
+        return
+
+    chat_id_raw = os.environ.get("TELEGRAM_CHAT_ID")
+    if not chat_id_raw:
+        await query.answer()
+        return
+    chat_id = int(chat_id_raw)
+
+    # 시간 체크
+    now = datetime.datetime.now(KST)
+    if not _attendance_allowed(now, session_date=session_date):
+        await query.answer("출석 시간이 아닙니다.")
+        return
+
+    # 단체방 멤버만 허용
+    if not await _is_allowed_user(context, query.from_user.id):
+        await query.answer("참여 권한이 없습니다.")
+        return
+
+    session = await db.attendance_get_session(session_date)
+    if not session:
+        await query.answer("출석 시간이 아닙니다.")
+        return
+
+    max_participants = int(session["max_participants"] or ATTENDANCE_MAX_PARTICIPANTS)
+    status_message_id = session.get("status_message_id")
+    status_chat_id = session.get("status_message_chat_id")
+    if not status_message_id or not status_chat_id:
+        await query.answer()
+        return
+
+    checked = await db.attendance_get_count(session_date)
+    # 이미 정원 이상이면 토스트 없이 무시
+    if checked >= max_participants:
+        await query.answer()
+        return
+
+    user_name = query.from_user.full_name or query.from_user.username or str(query.from_user.id)
+    added = await db.attendance_add_record(session_date, query.from_user.id, user_name)
+    if not added:
+        await query.answer("이미 출석 처리되었습니다.")
+        return
+
+    checked = await db.attendance_get_count(session_date)
+    records = await db.attendance_get_records(session_date)
+    user_ids = [int(r["user_id"]) for r in records]
+    display_names = await db.get_user_display_names(user_ids)
+
+    lines: list[str] = []
+    for idx, r in enumerate(records, start=1):
+        uid = int(r["user_id"])
+        dn = (display_names.get(uid) or "").strip()
+        fallback = str(r.get("user_name") or "이름없음")
+        name = dn or fallback
+        lines.append(f"{idx}. {name}")
+
+    rate = _attendance_rate_percent(checked, max_participants)
+    new_text = _attendance_status_text(lines, rate)
+
+    # 정원 달성 시: 버튼 제거 + 축하 메시지 발송
+    if checked >= max_participants:
+        await context.bot.edit_message_text(
+            chat_id=status_chat_id,
+            message_id=status_message_id,
+            text=new_text,
+            reply_markup=None,
+        )
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="🎉 100% 출석 완료! 오늘도 수고하셨습니다! 💪🌟",
+        )
+        await query.answer()
+        return
+
+    await context.bot.edit_message_text(
+        chat_id=status_chat_id,
+        message_id=status_message_id,
+        text=new_text,
+        reply_markup=_attendance_keyboard(session_date),
+    )
+    await query.answer()
+
+
+async def attendance_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """(관리자용) 현재 세션 출석 상태 확인."""
+    chat = update.effective_chat
+    if not chat or chat.type == "private":
+        await update.message.reply_text("출석 상태는 단체방에서 확인해 주세요.")
+        return
+    user = update.effective_user
+    if user and not await _is_allowed_user(context, user.id):
+        await update.message.reply_text("참여 권한이 없어요.")
+        return
+
+    now = datetime.datetime.now(KST)
+    # 최근 일요일(오늘이 일요일이면 오늘)
+    delta = (now.weekday() - 6) % 7
+    session_date = (now.date() - datetime.timedelta(days=delta)).strftime("%Y-%m-%d")
+
+    session = await db.attendance_get_session(session_date)
+    if not session:
+        await update.message.reply_text("📭 아직 출석 세션이 시작되지 않았어요.")
+        return
+
+    max_participants = int(session["max_participants"] or ATTENDANCE_MAX_PARTICIPANTS)
+    checked = await db.attendance_get_count(session_date)
+    rate = _attendance_rate_percent(checked, max_participants)
+
+    records = await db.attendance_get_records(session_date)
+    user_ids = [int(r["user_id"]) for r in records]
+    display_names = await db.get_user_display_names(user_ids)
+
+    lines: list[str] = []
+    for idx, r in enumerate(records, start=1):
+        uid = int(r["user_id"])
+        dn = (display_names.get(uid) or "").strip()
+        fallback = str(r.get("user_name") or "이름없음")
+        name = dn or fallback
+        lines.append(f"{idx}. {name}")
+
+    text = f"📋 출석 상태 ({session_date}) (출석율 {rate}%)\n\n"
+    if lines:
+        text += "\n".join(lines)
+    await update.message.reply_text(text.strip())
 
 
 # ─────────────────────────────────────────
@@ -318,7 +598,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─────────────────────────────────────────
 
 HELP_TEXT = """
-📖 *SanS 루틴 봇 사용법*
+📖 *루틴 기록 설명서*
 
 *▶ 루틴 입력*
 • 루틴은 *봇과 1:1 대화*에서만 입력해 주세요.
@@ -348,7 +628,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📌 사용법\n"
         "• 매일 아침 8시·저녁 9시 알림이 단체방에 올라와요.\n"
         f"• 루틴 입력: 아래 링크 클릭해서 각자 입력해 주세요.\n{_bot_tme_link()}\n\n"
-        "자세한 사용법은 루틴 봇 대화창에서 /help 를 입력하세요. 😊",
+        "자세한 사용법은 루틴 기록 설명서: /routinehelp 를 입력하세요. 😊",
     )
 
 
@@ -533,6 +813,52 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = header + "\n\n" + "\n".join(lines)
     await update.message.reply_text(text)
+
+
+async def send_daily_routine_list_followup(context: ContextTypes.DEFAULT_TYPE):
+    """밤 11시: 오늘까지 기록된 /list 메시지를 자동으로 단체방에 전송."""
+    chat_id_raw = os.environ.get("TELEGRAM_CHAT_ID")
+    if not chat_id_raw:
+        return
+    chat_id = int(chat_id_raw)
+
+    target_date_str = datetime.datetime.now(KST).strftime("%Y-%m-%d")
+    routines = await db.get_today_routines(target_date_str)
+
+    if not routines:
+        base = f"📭 {_format_date_label(target_date_str)} 기록된 루틴이 없어요."
+    else:
+        by_user: dict[int, dict[str, object]] = {}
+        for r in routines:
+            uid = int(r.get("user_id") or 0)
+            name = (r.get("user_name") or "").strip() or "이름없음"
+            content = (r.get("content") or "").strip()
+            if not content:
+                continue
+            if uid not in by_user:
+                by_user[uid] = {"fallback_name": name, "contents": []}
+            (by_user[uid]["contents"]).append(content)  # type: ignore[union-attr]
+
+        display_names = await db.get_user_display_names(list(by_user.keys()))
+        date_label = _format_date_label(target_date_str)
+        header = f"📋 {date_label} 루틴 기록 (참여인원 {len(by_user)}명)"
+
+        items = []
+        for uid, data in by_user.items():
+            dn = (display_names.get(uid) or "").strip()
+            fallback = str(data.get("fallback_name") or "이름없음")
+            contents = list(data.get("contents") or [])
+            items.append((dn or fallback, contents))
+
+        lines: list[str] = []
+        for _, (name, contents) in enumerate(sorted(items, key=lambda x: x[0]), start=1):
+            lines.append(f"• [{name}] {', '.join(contents)}")
+
+        base = header + "\n\n" + "\n".join(lines)
+
+    praise = "루틴 열심히 하신 것 정말 대단해요. 오늘도 수고하셨습니다. 굿나잇! 🌙"
+    await context.bot.send_message(chat_id=chat_id, text=base + "\n\n" + praise)
+    logger.info("Routine list followup sent | date=%s", target_date_str)
 
 
 async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -722,6 +1048,7 @@ def main():
     # 커맨드 등록
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("routinehelp", help_command))
     app.add_handler(CommandHandler("add", add_command))
     app.add_handler(CommandHandler("delete", delete_command))
     app.add_handler(CommandHandler("reset", reset_command))
@@ -730,6 +1057,7 @@ def main():
     app.add_handler(CommandHandler("list", list_command))
     app.add_handler(CommandHandler("setname", setname_command))
     app.add_handler(CommandHandler("summary", summary_command))
+    app.add_handler(CommandHandler("attendancehelp", attendance.attendance_help_command))
     app.add_handler(CommandHandler("weekstats", week_stats_command))
     app.add_handler(CommandHandler("monthstats", month_stats_command))
     app.add_handler(CommandHandler("today", today_command))
@@ -738,11 +1066,19 @@ def main():
 
     # 스케줄 등록 (KST 기준)
     morning_time = datetime.time(hour=8, minute=0, tzinfo=KST)
-    evening_time = datetime.time(hour=21, minute=0, tzinfo=KST)
+    evening_time = datetime.time(hour=20, minute=0, tzinfo=KST)
     lunch_time = datetime.time(hour=12, minute=0, tzinfo=KST)
+    routine_list_time = datetime.time(hour=23, minute=30, tzinfo=KST)
+
+    # evening 알람은 "내일부터" 시작하도록 첫 실행일 제어
+    global EVENING_ALARM_START_DATE
+    EVENING_ALARM_START_DATE = (datetime.datetime.now(KST).date() + datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+
     app.job_queue.run_daily(send_morning_alarm, time=morning_time)
     app.job_queue.run_daily(send_evening_alarm, time=evening_time)
     app.job_queue.run_daily(send_lunch_reminder, time=lunch_time)
+    app.job_queue.run_daily(send_daily_routine_list_followup, time=routine_list_time)
+    attendance.register_attendance(app, db, _is_allowed_user)
 
     logger.info("Bot started. Polling...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
