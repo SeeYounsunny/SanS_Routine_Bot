@@ -283,20 +283,15 @@ def register_attendance(
 
 
 async def attendance_help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """출석체크 사용법 안내 (개인방이 아닌 단체방에서만 권장)."""
+    """출석체크 안내 (개인방이 아닌 단체방에서만 권장)."""
     chat = update.effective_chat
     if not chat or chat.type not in ("group", "supergroup"):
         await update.message.reply_text("출석체크 사용법은 단체방에서 확인해 주세요.")
         return
 
-    # 허용 시작 시각은 '정규 시작 - 여유분'으로 계산
-    base_dt = datetime.datetime(2000, 1, 1, ATTENDANCE_START_TIME.hour, ATTENDANCE_START_TIME.minute)
-    allow_start = (base_dt - datetime.timedelta(minutes=ATTENDANCE_ALLOW_EARLY_MINUTES)).strftime("%H:%M")
-    end_time = ATTENDANCE_END_TIME.strftime("%H:%M")
-
     help_text = (
-        "📌 출석체크 사용법\n\n"
-        f"- 출석 가능 시간: 일요일 {allow_start} ~ {end_time} (Asia/Seoul)\n"
+        "📌 출석체크 안내\n\n"
+        "- 출석 가능 시간: 일요일 21시 ~ 23시 (Asia/Seoul)\n"
         f"- 목표 인원: {ATTENDANCE_MAX_PARTICIPANTS}명\n\n"
         "✅ 출석하기\n"
         "- 단체방에서 출석 메시지의 버튼을 눌러 출석해 주세요.\n\n"
