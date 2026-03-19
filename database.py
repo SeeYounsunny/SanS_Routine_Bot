@@ -49,6 +49,15 @@ class Database:
                     )
                     """
                 )
+                await conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS user_profiles (
+                        user_id      BIGINT PRIMARY KEY,
+                        display_name TEXT NOT NULL,
+                        updated_at   TIMESTAMPTZ DEFAULT NOW()
+                    )
+                    """
+                )
             finally:
                 await conn.close()
             return
@@ -89,9 +98,77 @@ class Database:
                 )
                 """
             )
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_profiles (
+                    user_id      INTEGER PRIMARY KEY,
+                    display_name TEXT NOT NULL,
+                    updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
             await conn.commit()
 
     # ── 알람 메시지 저장/조회 ──────────────────────────────
+
+    async def set_user_display_name(self, user_id: int, display_name: str) -> None:
+        display_name = (display_name or "").strip()
+        if self.use_postgres:
+            conn = await asyncpg.connect(DATABASE_URL)
+            try:
+                await conn.execute(
+                    """
+                    INSERT INTO user_profiles (user_id, display_name, updated_at)
+                    VALUES ($1, $2, NOW())
+                    ON CONFLICT (user_id)
+                    DO UPDATE SET display_name = EXCLUDED.display_name, updated_at = NOW()
+                    """,
+                    user_id,
+                    display_name,
+                )
+            finally:
+                await conn.close()
+            return
+
+        async with aiosqlite.connect(DB_PATH) as conn:
+            await conn.execute(
+                """
+                INSERT OR REPLACE INTO user_profiles (user_id, display_name, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                """,
+                (user_id, display_name),
+            )
+            await conn.commit()
+
+    async def get_user_display_names(self, user_ids: list[int]) -> dict[int, str]:
+        ids = [int(x) for x in user_ids if x is not None]
+        if not ids:
+            return {}
+
+        if self.use_postgres:
+            conn = await asyncpg.connect(DATABASE_URL)
+            try:
+                rows = await conn.fetch(
+                    """
+                    SELECT user_id, display_name
+                    FROM user_profiles
+                    WHERE user_id = ANY($1::bigint[])
+                    """,
+                    ids,
+                )
+                return {int(r["user_id"]): (r["display_name"] or "") for r in rows}
+            finally:
+                await conn.close()
+
+        placeholders = ",".join(["?"] * len(ids))
+        async with aiosqlite.connect(DB_PATH) as conn:
+            conn.row_factory = aiosqlite.Row
+            async with conn.execute(
+                f"SELECT user_id, display_name FROM user_profiles WHERE user_id IN ({placeholders})",
+                ids,
+            ) as cur:
+                rows = await cur.fetchall()
+                return {int(r["user_id"]): (r["display_name"] or "") for r in rows}
 
     async def save_prompt_message(self, message_id: int, prompt_type: str, date: str):
         if self.use_postgres:

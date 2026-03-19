@@ -89,7 +89,8 @@ Railway → 봇 서비스 → **Variables** 탭에서 추가:
 | `/delete` | 오늘 작성한 루틴 전부 삭제 |
 | `/reset 비밀번호` | 전체 데이터 초기화 (서버 비밀번호 일치 시에만 실행) |
 | `/search YYYY-MM-DD` | 해당 날짜의 내 루틴 조회 (예: /search 2025-03-15) |
-| `/list [YYYY-MM-DD]` | 해당 날짜의 전체 루틴 목록 (기본: 오늘). 헤더(`MM/DD 루틴 기록`) + `1. 이름` 다음 줄에 `- 루틴1, 루틴2` 형식 |
+| `/list [YYYY-MM-DD]` | 해당 날짜의 전체 루틴 목록 (기본: 오늘). 헤더(`MM/DD 루틴 기록`) + `• [이름]: 루틴1, 루틴2` 형식 |
+| `/setname 표시이름` | `/list` 등에 표시될 내 이름 설정 (1:1에서만) |
 | `/summary` | 오늘 전체 루틴 AI 요약 (ANTHROPIC_API_KEY 필요) |
 | `/weekstats` | 지난 7일 통계 (사람 TOP 3, 루틴 TOP 3) |
 | `/monthstats` | 지난 30일 통계 (사람 TOP 5, 루틴 TOP 5) |

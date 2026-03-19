@@ -75,14 +75,15 @@ async def send_lunch_reminder(context: ContextTypes.DEFAULT_TYPE):
     today_str = datetime.datetime.now(KST).strftime("%Y-%m-%d")
     routines = await db.get_today_routines(today_str)
 
-    by_user = {}
+    by_user: dict[int, dict[str, object]] = {}
     for r in routines:
+        uid = int(r.get("user_id") or 0)
         name = (r.get("user_name") or "").strip() or "이름 없음"
         content = (r.get("content") or "").strip()
-        if name not in by_user:
-            by_user[name] = []
+        if uid not in by_user:
+            by_user[uid] = {"fallback_name": name, "contents": []}
         if content:
-            by_user[name].append(content)
+            (by_user[uid]["contents"]).append(content)  # type: ignore[union-attr]
 
     if not by_user:
         await context.bot.send_message(
@@ -94,9 +95,16 @@ async def send_lunch_reminder(context: ContextTypes.DEFAULT_TYPE):
             ),
         )
     else:
+        display_names = await db.get_user_display_names(list(by_user.keys()))
         lines = []
-        for name, contents in sorted(by_user.items()):
-            lines.append(f"• {name}: {', '.join(contents)}")
+        items = []
+        for uid, data in by_user.items():
+            dn = (display_names.get(uid) or "").strip()
+            fallback = str(data.get("fallback_name") or "이름 없음")
+            contents = list(data.get("contents") or [])
+            items.append((dn or fallback, contents))
+        for name, contents in sorted(items, key=lambda x: x[0]):
+            lines.append(f"• [{name}]: {', '.join(contents)}")
         await context.bot.send_message(
             chat_id=chat_id,
             text=(
@@ -325,6 +333,7 @@ HELP_TEXT = """
 /delete — 오늘 입력한 루틴 전부 삭제
 /search YYYY-MM-DD — 해당 날짜 내 루틴 조회
 /list [YYYY-MM-DD] — 해당 날짜 전체 루틴 목록 (이름별, 요약 없음)
+/setname 이름 — /list 등에 표시될 내 이름 설정 (1:1에서)
 /summary — 오늘 전체 루틴 AI 요약
 /weekstats — 지난 7일 통계
 /monthstats — 지난 30일 통계
@@ -455,6 +464,32 @@ async def chatid_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"오류 발생: {e}")
 
 
+async def setname_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """개인 대화에서 표시 이름 설정 (/list 등에 적용)"""
+    chat = update.effective_chat
+    user = update.effective_user
+    if not chat or not user:
+        return
+    if chat.type in ("group", "supergroup"):
+        await update.message.reply_text("이름 설정은 봇과 1:1 대화에서만 가능해요.")
+        return
+    if not await _is_allowed_user(context, user.id):
+        await update.message.reply_text("이 봇은 SanS 1조 단체방 멤버만 설정/입력이 가능해요.")
+        return
+
+    display_name = " ".join((context.args or []))
+    display_name = (display_name or "").strip()
+    if not display_name:
+        await update.message.reply_text("사용법: /setname 표시이름 (예: /setname 홍길동)")
+        return
+    if len(display_name) > 40:
+        await update.message.reply_text("표시 이름은 40자 이내로 입력해 주세요.")
+        return
+
+    await db.set_user_display_name(user.id, display_name)
+    await update.message.reply_text(f"✅ 표시 이름이 `{display_name}` 로 설정됐어요.", parse_mode="Markdown")
+
+
 async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """해당 날짜(기본: 오늘) 기록된 모든 사람의 루틴을 이름별로 나열 (요약 없음)"""
     target_date_str = datetime.datetime.now(KST).strftime("%Y-%m-%d")
@@ -469,22 +504,32 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not routines:
         await update.message.reply_text(f"📭 {_format_date_label(target_date_str)} 기록된 루틴이 없어요.")
         return
-    by_user: dict[str, list[str]] = {}
+    by_user: dict[int, dict[str, object]] = {}
     for r in routines:
+        uid = int(r.get("user_id") or 0)
         name = (r.get("user_name") or "").strip() or "이름없음"
         content = (r.get("content") or "").strip()
         if not content:
             continue
-        if name not in by_user:
-            by_user[name] = []
-        by_user[name].append(content)
+        if uid not in by_user:
+            by_user[uid] = {"fallback_name": name, "contents": []}
+        (by_user[uid]["contents"]).append(content)  # type: ignore[union-attr]
+
+    display_names = await db.get_user_display_names(list(by_user.keys()))
 
     date_label = _format_date_label(target_date_str)
     header = f"📋 {date_label} 루틴 기록"
 
     lines: list[str] = []
-    for i, (name, contents) in enumerate(sorted(by_user.items()), start=1):
-        lines.append(f"{i}. {name}\n- {', '.join(contents)}")
+    items = []
+    for uid, data in by_user.items():
+        dn = (display_names.get(uid) or "").strip()
+        fallback = str(data.get("fallback_name") or "이름없음")
+        contents = list(data.get("contents") or [])
+        items.append((dn or fallback, contents))
+
+    for i, (name, contents) in enumerate(sorted(items, key=lambda x: x[0]), start=1):
+        lines.append(f"• [{name}]: {', '.join(contents)}")
 
     text = header + "\n\n" + "\n".join(lines)
     await update.message.reply_text(text)
@@ -683,6 +728,7 @@ def main():
     app.add_handler(CommandHandler("search", search_command))
     app.add_handler(CommandHandler("chatid", chatid_command))
     app.add_handler(CommandHandler("list", list_command))
+    app.add_handler(CommandHandler("setname", setname_command))
     app.add_handler(CommandHandler("summary", summary_command))
     app.add_handler(CommandHandler("weekstats", week_stats_command))
     app.add_handler(CommandHandler("monthstats", month_stats_command))
