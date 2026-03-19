@@ -304,7 +304,7 @@ async def attendance_help_command(update: Update, context: ContextTypes.DEFAULT_
         "- 시간 외: `출석 시간이 아닙니다.`\n"
         "- 중복: `이미 출석 처리되었습니다.`\n"
         "- 완료 후: 정원이 꽉 차면 버튼이 사라지고, 새 메시지로 `100% 출석 완료! 오늘도 수고하셨습니다!`가 전송됩니다.\n\n"
-        "참고: 출석 시작 안내는 위(상단)에 잠시 표시된 뒤 사라집니다."
+        "참고: 출석 시작 안내 메시지는 자동 삭제되지 않고 그대로 표시됩니다."
     )
 
     await update.message.reply_text(help_text, parse_mode="Markdown")
