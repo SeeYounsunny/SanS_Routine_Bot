@@ -484,7 +484,7 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines: list[str] = []
     for i, (name, contents) in enumerate(sorted(by_user.items()), start=1):
-        lines.append(f"{i}. {name}: {', '.join(contents)}")
+        lines.append(f"{i}. {name}\n- {', '.join(contents)}")
 
     text = header + "\n\n" + "\n".join(lines)
     await update.message.reply_text(text)
