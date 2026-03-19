@@ -482,12 +482,11 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     date_label = _format_date_label(target_date_str)
     header = f"📋 {date_label} 루틴 기록"
 
-    blocks: list[str] = []
+    lines: list[str] = []
     for i, (name, contents) in enumerate(sorted(by_user.items()), start=1):
-        item_lines = "\n".join([f"- {c}" for c in contents])
-        blocks.append(f"{i}. {name}\n{item_lines}")
+        lines.append(f"{i}. {name}: {', '.join(contents)}")
 
-    text = header + "\n\n" + "\n\n".join(blocks)
+    text = header + "\n\n" + "\n".join(lines)
     await update.message.reply_text(text)
 
 
