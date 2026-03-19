@@ -598,7 +598,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─────────────────────────────────────────
 
 HELP_TEXT = """
-📖 *루틴 기록 설명서*
+📖 *루틴 기록 사용법 안내*
 
 *▶ 루틴 입력*
 • 루틴은 *봇과 1:1 대화*에서만 입력해 주세요.
@@ -628,7 +628,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📌 사용법\n"
         "• 매일 아침 8시·저녁 9시 알림이 단체방에 올라와요.\n"
         f"• 루틴 입력: 아래 링크 클릭해서 각자 입력해 주세요.\n{_bot_tme_link()}\n\n"
-        "자세한 사용법은 루틴 기록 설명서: /routinehelp 를 입력하세요. 😊",
+        "자세한 사용법은 루틴 기록 사용법 안내: /help 를 입력하세요. 😊",
     )
 
 
@@ -1048,7 +1048,6 @@ def main():
     # 커맨드 등록
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("routinehelp", help_command))
     app.add_handler(CommandHandler("add", add_command))
     app.add_handler(CommandHandler("delete", delete_command))
     app.add_handler(CommandHandler("reset", reset_command))
@@ -1057,7 +1056,7 @@ def main():
     app.add_handler(CommandHandler("list", list_command))
     app.add_handler(CommandHandler("setname", setname_command))
     app.add_handler(CommandHandler("summary", summary_command))
-    app.add_handler(CommandHandler("attendancehelp", attendance.attendance_help_command))
+    app.add_handler(CommandHandler("attendanceguide", attendance.attendance_help_command))
     app.add_handler(CommandHandler("weekstats", week_stats_command))
     app.add_handler(CommandHandler("monthstats", month_stats_command))
     app.add_handler(CommandHandler("today", today_command))
