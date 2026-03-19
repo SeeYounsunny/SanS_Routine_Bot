@@ -139,6 +139,31 @@ class Database:
                 row = await cur.fetchone()
                 return row[0] if row else None
 
+    async def get_prompt_date(self, message_id: int) -> str | None:
+        """prompt_messages.date 값을 가져옴.
+
+        원래 코드에서는 get_prompt_type만 사용했기 때문에 date 포맷이 일관되지 않을 수 있어,
+        봇 코드에서 파싱 실패 시 기본값으로(today) 폴백하도록 처리합니다.
+        """
+        if self.use_postgres:
+            conn = await asyncpg.connect(DATABASE_URL)
+            try:
+                row = await conn.fetchrow(
+                    "SELECT date FROM prompt_messages WHERE message_id = $1",
+                    message_id,
+                )
+                return row["date"] if row else None
+            finally:
+                await conn.close()
+
+        async with aiosqlite.connect(DB_PATH) as conn:
+            async with conn.execute(
+                "SELECT date FROM prompt_messages WHERE message_id = ?",
+                (message_id,),
+            ) as cur:
+                row = await cur.fetchone()
+                return row[0] if row else None
+
     # ── 어제 루틴 선택용 프롬프트 (번호로 선택) ─────────────────
 
     async def save_selection_prompt(

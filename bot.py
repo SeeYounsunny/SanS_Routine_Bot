@@ -35,33 +35,35 @@ def _bot_tme_link() -> str:
 
 async def send_morning_alarm(context: ContextTypes.DEFAULT_TYPE):
     chat_id = os.environ["TELEGRAM_CHAT_ID"]
-    today = datetime.datetime.now(KST).strftime("%m/%d")
+    today_label = datetime.datetime.now(KST).strftime("%m/%d")
+    today_str = datetime.datetime.now(KST).strftime("%Y-%m-%d")
 
     msg = await context.bot.send_message(
         chat_id=chat_id,
         text=(
             f"🌅 오늘 루틴을 적어볼까요?\n\n"
-            f"{today} 오늘 하루에 실천하고 싶은/실천한 루틴을 자유롭게 적어주세요. 💪\n\n"
+            f"{today_label} 오늘 하루에 실천하고 싶은/실천한 루틴을 자유롭게 적어주세요. 💪\n\n"
             f"아래 링크 클릭해서 각자 루틴 입력해 주세요.\n{_bot_tme_link()}"
         ),
     )
-    await db.save_prompt_message(msg.message_id, "morning", today)
+    await db.save_prompt_message(msg.message_id, "morning", today_str)
     logger.info(f"Morning alarm sent | message_id={msg.message_id}")
 
 
 async def send_evening_alarm(context: ContextTypes.DEFAULT_TYPE):
     chat_id = os.environ["TELEGRAM_CHAT_ID"]
-    today = datetime.datetime.now(KST).strftime("%m/%d")
+    today_label = datetime.datetime.now(KST).strftime("%m/%d")
+    today_str = datetime.datetime.now(KST).strftime("%Y-%m-%d")
 
     msg = await context.bot.send_message(
         chat_id=chat_id,
         text=(
             f"🌙 오늘 루틴, 마무리해볼까요?\n\n"
-            f"{today} 아직 오늘 루틴을 적지 않았다면 지금 적어주세요. ✨\n\n"
+            f"{today_label} 아직 오늘 루틴을 적지 않았다면 지금 적어주세요. ✨\n\n"
             f"아래 링크 클릭해서 각자 루틴 입력해 주세요.\n{_bot_tme_link()}"
         ),
     )
-    await db.save_prompt_message(msg.message_id, "evening", today)
+    await db.save_prompt_message(msg.message_id, "evening", today_str)
     logger.info(f"Evening alarm sent | message_id={msg.message_id}")
 
 
@@ -136,6 +138,37 @@ def _dm_add_hint(context: ContextTypes.DEFAULT_TYPE) -> str:
     )
 
 
+def _parse_date_input(date_input: str) -> str | None:
+    """/add 뒤에 붙일 날짜 파싱 (YYYY-MM-DD / YYYY/MM/DD / YYYYMMDD 지원)."""
+    s = (date_input or "").strip()
+    if not s:
+        return None
+
+    candidates = [s]
+    # 구분자 통일 (예: 2026.03.17)
+    candidates.append(s.replace(".", "-").replace("/", "-"))
+    # YYYYMMDD
+    candidates.append(s.replace("-", "").replace("/", ""))
+
+    for c in candidates:
+        for fmt in ("%Y-%m-%d", "%Y%m%d"):
+            try:
+                dt = datetime.datetime.strptime(c, fmt)
+                return dt.strftime("%Y-%m-%d")
+            except ValueError:
+                continue
+    return None
+
+
+def _format_date_label(date_str: str) -> str:
+    """YYYY-MM-DD -> MM/DD 형태. 파싱 불가면 원문 반환."""
+    try:
+        dt = datetime.datetime.strptime(date_str, "%Y-%m-%d")
+        return dt.strftime("%m/%d")
+    except Exception:
+        return date_str
+
+
 def _get_allowed_group_chat_id() -> int | None:
     raw = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
     if not raw:
@@ -187,19 +220,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 1) 어제 루틴 선택용 메시지에 대한 답장인지 확인
     sel = await db.get_selection_prompt(reply_to_id)
     if sel:
+        save_date = sel.get("selection_date") or today_str
+        date_label = _format_date_label(save_date)
         items = json.loads(sel["items_json"])
         to_save = _parse_selection_reply(msg.text or "", items)
         for content in to_save:
             await db.save_routine(
                 user_id=user.id,
                 user_name=name,
-                date=today_str,
+                date=save_date,
                 routine_type=sel["prompt_type"],
                 content=content,
             )
         await db.delete_selection_prompt(reply_to_id)
         count = len(to_save)
-        await msg.reply_text(f"✅ *{name}*님의 오늘 루틴 {count}개 기록했어요!", parse_mode="Markdown")
+        await msg.reply_text(
+            f"✅ *{name}*님의 {date_label} 루틴 {count}개 기록했어요!",
+            parse_mode="Markdown",
+        )
         logger.info(f"Routine saved from selection | user={name}, count={count}")
         return
 
@@ -208,8 +246,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not prompt_type:
         return  # 봇 알람에 대한 답장이 아님
 
+    prompt_date = await db.get_prompt_date(reply_to_id)
+    save_date = prompt_date or today_str
+    try:
+        save_date_obj = datetime.datetime.strptime(save_date, "%Y-%m-%d").date()
+    except Exception:
+        # 과거에 저장된 prompt.date가 MM/DD 형태였을 가능성 대비
+        save_date_obj = datetime.datetime.now(KST).date()
+        save_date = today_str
+    yesterday_for_items = (save_date_obj - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+    date_label = _format_date_label(save_date)
+
     # 3) 어제 루틴이 있으면 번호 선택 메시지 전송 후 대기
-    yesterday_routines = await db.get_user_routines(user.id, yesterday)
+    yesterday_routines = await db.get_user_routines(user.id, yesterday_for_items)
     seen_keys = set()
     items = []
     for row in yesterday_routines:
@@ -234,7 +283,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message_id=sent.message_id,
             user_id=user.id,
             chat_id=msg.chat_id,
-            selection_date=yesterday,
+            selection_date=save_date,
             items_json=json.dumps(items, ensure_ascii=False),
             prompt_type=prompt_type,
         )
@@ -245,11 +294,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await db.save_routine(
         user_id=user.id,
         user_name=name,
-        date=today_str,
+        date=save_date,
         routine_type=prompt_type,
         content=msg.text or "",
     )
-    await msg.reply_text(f"✅ *{name}*님의 오늘 루틴이 기록됐어요!", parse_mode="Markdown")
+    await msg.reply_text(
+        f"✅ *{name}*님의 {date_label} 루틴이 기록됐어요!",
+        parse_mode="Markdown",
+    )
     logger.info(f"Routine saved | user={name}, type={prompt_type}")
 
 
@@ -262,12 +314,12 @@ HELP_TEXT = """
 
 *▶ 루틴 입력*
 • 루틴은 *봇과 1:1 대화*에서만 입력해 주세요.
-• *봇과 1:1* 채팅을 연 뒤 `/add` 를 입력하세요.
+• *봇과 1:1* 채팅을 연 뒤 `/add` 또는 `/add YYYY-MM-DD` 를 입력하세요.
 • 어제 루틴이 있으면 번호 목록이 나옵니다. 기존 건은 *번호를 쉼표(,)*로 구분, 새로 넣을 건 *쉼표 뒤*에 적고, 그 메시지에 *답장*으로 보내면 됩니다. (예: 1,3,요가 10분)
 • 단체방에서는 아침 8시·저녁 9시 알림, 12시 점심 리마인드가 올라옵니다.
 
 *▶ 명령어*
-/add — 오늘 루틴 추가 (1:1에서)
+/add [YYYY-MM-DD] — 루틴 추가 (1:1에서, 날짜 지정 가능)
 /today — 오늘 내가 입력한 루틴 보기
 /myroutine — 내가 자주 쓰는 루틴 TOP 5
 /delete — 오늘 입력한 루틴 전부 삭제
@@ -314,8 +366,18 @@ async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("이 봇은 SanS 1조 단체방 멤버만 루틴 입력이 가능해요.")
             return
 
-    today_label = datetime.datetime.now(KST).strftime("%m/%d")
-    yesterday = (datetime.datetime.now(KST) - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+    target_date_str = datetime.datetime.now(KST).strftime("%Y-%m-%d")
+    if context.args:
+        target_date_candidate = (context.args[0] or "").strip()
+        parsed = _parse_date_input(target_date_candidate)
+        if not parsed:
+            await update.message.reply_text("사용법: /add [YYYY-MM-DD] (예: /add 2026-03-17)")
+            return
+        target_date_str = parsed
+    target_label = _format_date_label(target_date_str)
+
+    target_date_obj = datetime.datetime.strptime(target_date_str, "%Y-%m-%d").date()
+    yesterday = (target_date_obj - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
 
     # 개인채팅: 해당 유저의 어제 루틴만 표시 (남의 루틴 아님)
     yesterday_routines = await db.get_user_routines(user.id, yesterday)
@@ -334,7 +396,7 @@ async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = await context.bot.send_message(
             chat_id=chat.id,
             text=(
-                f"📝 *오늘 루틴 추가* ({today_label})\n\n"
+                f"📝 *{target_label} 루틴 추가*\n\n"
                 f"어제 루틴:\n{list_text}\n\n"
                 f"기존 건 번호를 *쉼표(,)*로 구분해서 쓰고, 새로 추가할 게 있으면 쉼표 뒤에 적어주세요.\n"
                 f"예: 1,3,요가 10분\n\n"
@@ -346,7 +408,7 @@ async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message_id=msg.message_id,
             user_id=user.id,
             chat_id=chat.id,
-            selection_date=yesterday,
+            selection_date=target_date_str,
             items_json=json.dumps(items, ensure_ascii=False),
             prompt_type="morning",
         )
@@ -355,13 +417,13 @@ async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = await context.bot.send_message(
             chat_id=chat.id,
             text=(
-                f"📝 *오늘 루틴을 추가해주세요!*\n\n"
-                f"*{today_label}* 추가로 실천하고 싶은/실천한 루틴을 적어주세요.\n\n"
+                f"📝 *{target_label} 루틴을 추가해주세요!*\n\n"
+                f"*{target_label}* 추가로 실천하고 싶은/실천한 루틴을 적어주세요.\n\n"
                 f"👇 *이 메시지에 답장*으로 적어주시면 기록됩니다."
             ),
             parse_mode="Markdown",
         )
-        await db.save_prompt_message(msg.message_id, "morning", today_label)
+        await db.save_prompt_message(msg.message_id, "morning", target_date_str)
 
 
 async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
