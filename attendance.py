@@ -294,12 +294,11 @@ async def attendance_help_command(update: Update, context: ContextTypes.DEFAULT_
         "- 출석 가능 시간: 일요일 21시 ~ 23시 (Asia/Seoul)\n"
         f"- 목표 인원: {ATTENDANCE_MAX_PARTICIPANTS}명\n\n"
         "✅ 출석하기\n"
-        "- 단체방에서 출석 메시지의 버튼을 눌러 출석해 주세요.\n\n"
+        "- 단체방에서 출석 현황 메시지의 [출석] 버튼을 누르면 출석 기록과 함께 출석 명단이 업데이트 됩니다.\n\n"
         "ℹ️ 안내 메시지\n"
         "- 시간 외: `출석 시간이 아닙니다.`\n"
         "- 중복: `이미 출석 처리되었습니다.`\n"
-        "- 완료 후: 정원이 꽉 차면 버튼이 사라지고, 새 메시지로 `100% 출석 완료! 오늘도 수고하셨습니다!`가 전송됩니다.\n\n"
-        "참고: 출석 시작 안내 메시지는 자동 삭제되지 않고 그대로 표시됩니다."
+        "- 완료 후: 정원이 꽉 차면 버튼이 사라지고, 새 메시지로 `100% 출석 완료! 오늘도 수고하셨습니다!`가 전송됩니다."
     )
 
     await update.message.reply_text(help_text, parse_mode="Markdown")
