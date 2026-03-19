@@ -122,6 +122,7 @@ SanS_Routine_Bot/
 ├── bot.py          # 메인 봇 로직 & 스케줄러
 ├── database.py     # PostgreSQL / SQLite 지원, 루틴 저장·통계 쿼리
 ├── ai_summary.py   # Claude AI 요약 생성
+├── attendance.py   # 출석체크(버튼/세션/현황) 기능
 ├── requirements.txt
 ├── Procfile        # Railway 배포 설정 (worker: python bot.py)
 └── .env.example    # 환경변수 예시
