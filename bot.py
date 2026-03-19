@@ -324,7 +324,7 @@ HELP_TEXT = """
 /myroutine — 내가 자주 쓰는 루틴 TOP 5
 /delete — 오늘 입력한 루틴 전부 삭제
 /search YYYY-MM-DD — 해당 날짜 내 루틴 조회
-/list — 오늘 기록된 전체 루틴 목록 (이름별)
+/list [YYYY-MM-DD] — 해당 날짜 전체 루틴 목록 (이름별, 요약 없음)
 /summary — 오늘 전체 루틴 AI 요약
 /weekstats — 지난 7일 통계
 /monthstats — 지난 30일 통계
@@ -456,11 +456,18 @@ async def chatid_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """오늘 현재까지 기록된 모든 사람의 루틴을 이름별로 나열 (요약 없음)"""
-    today_str = datetime.datetime.now(KST).strftime("%Y-%m-%d")
-    routines = await db.get_today_routines(today_str)
+    """해당 날짜(기본: 오늘) 기록된 모든 사람의 루틴을 이름별로 나열 (요약 없음)"""
+    target_date_str = datetime.datetime.now(KST).strftime("%Y-%m-%d")
+    if context.args:
+        parsed = _parse_date_input((context.args[0] or "").strip())
+        if not parsed:
+            await update.message.reply_text("사용법: /list [YYYY-MM-DD] (예: /list 2026-03-15)")
+            return
+        target_date_str = parsed
+
+    routines = await db.get_today_routines(target_date_str)
     if not routines:
-        await update.message.reply_text("📭 오늘 기록된 루틴이 없어요.")
+        await update.message.reply_text(f"📭 {_format_date_label(target_date_str)} 기록된 루틴이 없어요.")
         return
     by_user: dict[str, list[str]] = {}
     for r in routines:
@@ -471,8 +478,16 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if name not in by_user:
             by_user[name] = []
         by_user[name].append(content)
-    lines = [f"{i}. {name}: {', '.join(contents)}" for i, (name, contents) in enumerate(sorted(by_user.items()), start=1)]
-    text = "\n".join(lines)
+
+    date_label = _format_date_label(target_date_str)
+    header = f"📋 {date_label} 루틴 기록"
+
+    blocks: list[str] = []
+    for i, (name, contents) in enumerate(sorted(by_user.items()), start=1):
+        item_lines = "\n".join([f"- {c}" for c in contents])
+        blocks.append(f"{i}. {name}\n{item_lines}")
+
+    text = header + "\n\n" + "\n\n".join(blocks)
     await update.message.reply_text(text)
 
 
