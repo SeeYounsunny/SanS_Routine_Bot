@@ -1056,7 +1056,6 @@ def main():
     app.add_handler(CommandHandler("list", list_command))
     app.add_handler(CommandHandler("setname", setname_command))
     app.add_handler(CommandHandler("summary", summary_command))
-    app.add_handler(CommandHandler("attendanceguide", attendance.attendance_help_command))
     app.add_handler(CommandHandler("weekstats", week_stats_command))
     app.add_handler(CommandHandler("monthstats", month_stats_command))
     app.add_handler(CommandHandler("today", today_command))

@@ -275,6 +275,7 @@ def register_attendance(
         await update.message.reply_text(text.strip())
 
     app.add_handler(CommandHandler("status", attendance_status_command))
+    app.add_handler(CommandHandler("attendanceguide", attendance_help_command))
     app.add_handler(CallbackQueryHandler(attendance_callback, pattern=r"^attendance:"))
 
     # 스케줄 등록: 매주 일요일 20:50
