@@ -104,7 +104,7 @@ async def send_lunch_reminder(context: ContextTypes.DEFAULT_TYPE):
             contents = list(data.get("contents") or [])
             items.append((dn or fallback, contents))
         for name, contents in sorted(items, key=lambda x: x[0]):
-            lines.append(f"• [{name}]: {', '.join(contents)}")
+            lines.append(f"• [{name}] {', '.join(contents)}")
         await context.bot.send_message(
             chat_id=chat_id,
             text=(
@@ -529,7 +529,7 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         items.append((dn or fallback, contents))
 
     for i, (name, contents) in enumerate(sorted(items, key=lambda x: x[0]), start=1):
-        lines.append(f"• [{name}]: {', '.join(contents)}")
+        lines.append(f"• [{name}] {', '.join(contents)}")
 
     text = header + "\n\n" + "\n".join(lines)
     await update.message.reply_text(text)
