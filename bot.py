@@ -108,7 +108,7 @@ async def send_lunch_reminder(context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(
             chat_id=chat_id,
             text=(
-                "☀️ 점심 리마인드 — 오늘 입력한 루틴\n\n"
+                f"☀️ 점심 리마인드 — 오늘 입력한 루틴 (참여인원 {len(items)}명)\n\n"
                 + "\n".join(lines)
                 + "\n\n"
                 + "아직 입력 안 하신 분들은 지금 기록해주세요.\n"
@@ -518,7 +518,7 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     display_names = await db.get_user_display_names(list(by_user.keys()))
 
     date_label = _format_date_label(target_date_str)
-    header = f"📋 {date_label} 루틴 기록"
+    header = f"📋 {date_label} 루틴 기록 (참여인원 {len(by_user)}명)"
 
     lines: list[str] = []
     items = []
