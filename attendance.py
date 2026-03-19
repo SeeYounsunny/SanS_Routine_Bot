@@ -35,12 +35,9 @@ async def _send_ephemeral_message(
     text: str,
     ttl_seconds: int = 90,
 ) -> None:
-    msg = await context.bot.send_message(chat_id=chat_id, text=text)
-    context.job_queue.run_once(
-        _delete_message_job,
-        when=ttl_seconds,
-        data={"chat_id": chat_id, "message_id": msg.message_id},
-    )
+    # 안내 문구는 "토스트(toast)"처럼 자동 사라지는 UI가 아니라,
+    # 일반 메시지이므로 삭제 로직 없이 그대로 둔다.
+    await context.bot.send_message(chat_id=chat_id, text=text)
 
 
 def _attendance_callback_data(session_date: str) -> str:
