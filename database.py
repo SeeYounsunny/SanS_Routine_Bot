@@ -184,6 +184,13 @@ class Database:
             )
             await conn.commit()
 
+    @staticmethod
+    def resolve_visible_name(user_id: int, display_names: dict[int, str], telegram_fallback: str) -> str:
+        """표시 이름: /setname 값 우선, 없으면 텔레그램 기반 fallback."""
+        dn = (display_names.get(user_id) or "").strip()
+        fb = (telegram_fallback or "").strip()
+        return dn or fb or "이름없음"
+
     async def get_user_display_names(self, user_ids: list[int]) -> dict[int, str]:
         ids = [int(x) for x in user_ids if x is not None]
         if not ids:
@@ -728,16 +735,26 @@ class Database:
     # ── 집계용 통계 쿼리 ─────────────────────────────────────
 
     async def get_top_users(self, start_date: str, end_date: str, limit: int) -> list[dict]:
-        """기간(start_date~end_date) 동안 루틴을 가장 많이 기록한 사람 순위"""
+        """기간(start_date~end_date) 동안 루틴을 가장 많이 기록한 사람 순위 (user_id 기준 집계)."""
         if self.use_postgres:
             conn = await asyncpg.connect(DATABASE_URL)
             try:
                 rows = await conn.fetch(
                     """
-                    SELECT user_id, user_name, COUNT(*) AS count
-                    FROM routines
-                    WHERE date BETWEEN $1 AND $2
-                    GROUP BY user_id, user_name
+                    SELECT
+                        r.user_id,
+                        (
+                            SELECT r2.user_name
+                            FROM routines r2
+                            WHERE r2.user_id = r.user_id
+                              AND r2.date BETWEEN $1 AND $2
+                            ORDER BY r2.date DESC, r2.id DESC
+                            LIMIT 1
+                        ) AS user_name,
+                        COUNT(*)::bigint AS count
+                    FROM routines r
+                    WHERE r.date BETWEEN $1 AND $2
+                    GROUP BY r.user_id
                     ORDER BY count DESC
                     LIMIT $3
                     """,
@@ -753,14 +770,24 @@ class Database:
             conn.row_factory = aiosqlite.Row
             async with conn.execute(
                 """
-                SELECT user_id, user_name, COUNT(*) AS count
-                FROM routines
-                WHERE date BETWEEN ? AND ?
-                GROUP BY user_id, user_name
+                SELECT
+                    r.user_id,
+                    (
+                        SELECT r2.user_name
+                        FROM routines r2
+                        WHERE r2.user_id = r.user_id
+                          AND r2.date BETWEEN ? AND ?
+                        ORDER BY r2.date DESC, r2.id DESC
+                        LIMIT 1
+                    ) AS user_name,
+                    COUNT(*) AS count
+                FROM routines r
+                WHERE r.date BETWEEN ? AND ?
+                GROUP BY r.user_id
                 ORDER BY count DESC
                 LIMIT ?
                 """,
-                (start_date, end_date, limit),
+                (start_date, end_date, start_date, end_date, limit),
             ) as cur:
                 rows = await cur.fetchall()
                 return [dict(r) for r in rows]

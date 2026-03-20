@@ -3,6 +3,7 @@ import datetime
 import logging
 
 import pytz
+from database import Database
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
 
@@ -206,9 +207,9 @@ def register_attendance(
         display_lines: list[str] = []
         for idx, r in enumerate(records, start=1):
             uid = int(r["user_id"])
-            dn = (display_names.get(uid) or "").strip()
-            fallback = str(r.get("user_name") or "이름없음")
-            name = dn or fallback
+            name = Database.resolve_visible_name(
+                uid, display_names, str(r.get("user_name") or "")
+            )
             display_lines.append(f"{idx}. {name}")
 
         rate = _attendance_rate_percent(checked, max_participants)
@@ -264,9 +265,9 @@ def register_attendance(
         lines: list[str] = []
         for idx, r in enumerate(records, start=1):
             uid = int(r["user_id"])
-            dn = (display_names.get(uid) or "").strip()
-            fallback = str(r.get("user_name") or "이름없음")
-            name = dn or fallback
+            name = Database.resolve_visible_name(
+                uid, display_names, str(r.get("user_name") or "")
+            )
             lines.append(f"{idx}. {name}")
 
         text = f"📋 출석 상태 ({session_date}) (출석율 {rate}%)\n\n"
@@ -290,7 +291,7 @@ async def attendance_help_command(update: Update, context: ContextTypes.DEFAULT_
         return
 
     help_text = (
-        "📌 출석체크 안내\n\n"
+        "📌 출석체크 사용법 안내\n\n"
         "- 출석 가능 시간: 일요일 21시 ~ 23시 (Asia/Seoul)\n"
         f"- 목표 인원: {ATTENDANCE_MAX_PARTICIPANTS}명\n\n"
         "✅ 출석하기\n"

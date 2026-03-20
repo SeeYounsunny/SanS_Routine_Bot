@@ -117,10 +117,11 @@ async def send_lunch_reminder(context: ContextTypes.DEFAULT_TYPE):
         lines = []
         items = []
         for uid, data in by_user.items():
-            dn = (display_names.get(uid) or "").strip()
-            fallback = str(data.get("fallback_name") or "이름 없음")
+            label = Database.resolve_visible_name(
+                uid, display_names, str(data.get("fallback_name") or "")
+            )
             contents = list(data.get("contents") or [])
-            items.append((dn or fallback, contents))
+            items.append((label, contents))
         for name, contents in sorted(items, key=lambda x: x[0]):
             lines.append(f"• [{name}] {', '.join(contents)}")
         await context.bot.send_message(
@@ -323,9 +324,9 @@ async def attendance_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     lines: list[str] = []
     for idx, r in enumerate(records, start=1):
         uid = int(r["user_id"])
-        dn = (display_names.get(uid) or "").strip()
-        fallback = str(r.get("user_name") or "이름없음")
-        name = dn or fallback
+        name = Database.resolve_visible_name(
+            uid, display_names, str(r.get("user_name") or "")
+        )
         lines.append(f"{idx}. {name}")
 
     rate = _attendance_rate_percent(checked, max_participants)
@@ -387,9 +388,9 @@ async def attendance_status_command(update: Update, context: ContextTypes.DEFAUL
     lines: list[str] = []
     for idx, r in enumerate(records, start=1):
         uid = int(r["user_id"])
-        dn = (display_names.get(uid) or "").strip()
-        fallback = str(r.get("user_name") or "이름없음")
-        name = dn or fallback
+        name = Database.resolve_visible_name(
+            uid, display_names, str(r.get("user_name") or "")
+        )
         lines.append(f"{idx}. {name}")
 
     text = f"📋 출석 상태 ({session_date}) (출석율 {rate}%)\n\n"
@@ -488,7 +489,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     reply_to_id = msg.reply_to_message.message_id
     user = msg.from_user
-    name = user.full_name or user.username or str(user.id)
     chat = update.effective_chat
     today_str = datetime.datetime.now(KST).strftime("%Y-%m-%d")
     yesterday = (datetime.datetime.now(KST) - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
@@ -504,6 +504,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await _is_allowed_user(context, user.id):
             await msg.reply_text("이 봇은 SanS 1조 단체방 멤버만 루틴 입력이 가능해요.")
             return
+
+    fallback_name = user.full_name or user.username or str(user.id)
+    _dmap = await db.get_user_display_names([user.id])
+    name = Database.resolve_visible_name(user.id, _dmap, fallback_name)
 
     # 1) 어제 루틴 선택용 메시지에 대한 답장인지 확인
     sel = await db.get_selection_prompt(reply_to_id)
@@ -613,7 +617,7 @@ HELP_TEXT = """
 /delete — 오늘 입력한 루틴 전부 삭제
 /search YYYY-MM-DD — 해당 날짜 내 루틴 조회
 /list [YYYY-MM-DD] — 해당 날짜 전체 루틴 목록 (이름별, 요약 없음)
-/setname 이름 — /list 등에 표시될 내 이름 설정 (1:1에서)
+/setname 이름 — 목록·통계·요약·/today·/myroutine 등에 표시될 내 이름 설정 (1:1에서)
 /summary — 오늘 전체 루틴 AI 요약
 /weekstats — 지난 7일 통계
 /monthstats — 지난 30일 통계
@@ -745,7 +749,7 @@ async def chatid_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def setname_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """개인 대화에서 표시 이름 설정 (/list 등에 적용)"""
+    """개인 대화에서 표시 이름 설정 (목록·통계·요약·출석 등에 적용)"""
     chat = update.effective_chat
     user = update.effective_user
     if not chat or not user:
@@ -803,10 +807,11 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines: list[str] = []
     items = []
     for uid, data in by_user.items():
-        dn = (display_names.get(uid) or "").strip()
-        fallback = str(data.get("fallback_name") or "이름없음")
+        label = Database.resolve_visible_name(
+            uid, display_names, str(data.get("fallback_name") or "")
+        )
         contents = list(data.get("contents") or [])
-        items.append((dn or fallback, contents))
+        items.append((label, contents))
 
     for i, (name, contents) in enumerate(sorted(items, key=lambda x: x[0]), start=1):
         lines.append(f"• [{name}] {', '.join(contents)}")
@@ -845,10 +850,11 @@ async def send_daily_routine_list_followup(context: ContextTypes.DEFAULT_TYPE):
 
         items = []
         for uid, data in by_user.items():
-            dn = (display_names.get(uid) or "").strip()
-            fallback = str(data.get("fallback_name") or "이름없음")
+            label = Database.resolve_visible_name(
+                uid, display_names, str(data.get("fallback_name") or "")
+            )
             contents = list(data.get("contents") or [])
-            items.append((dn or fallback, contents))
+            items.append((label, contents))
 
         lines: list[str] = []
         for _, (name, contents) in enumerate(sorted(items, key=lambda x: x[0]), start=1):
@@ -877,7 +883,9 @@ async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     thinking_msg = await update.message.reply_text("⏳ AI가 요약을 생성 중입니다...")
     try:
-        summary = await generate_summary(routines, today_str)
+        uids = sorted({int(r.get("user_id") or 0) for r in routines if int(r.get("user_id") or 0)})
+        display_names = await db.get_user_display_names(uids)
+        summary = await generate_summary(routines, today_str, display_names)
         try:
             await thinking_msg.edit_text(summary, parse_mode="Markdown")
         except Exception:
@@ -909,9 +917,15 @@ async def week_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     text = "📊 *지난 7일 루틴 통계*\n\n"
 
     if top_users:
+        uids = [int(r["user_id"]) for r in top_users]
+        display_names = await db.get_user_display_names(uids)
         text += "👤 *가장 많이 기록한 사람 TOP 3*\n"
         for idx, row in enumerate(top_users, start=1):
-            text += f"{idx}위 {row['user_name']} ({row['count']}회)\n"
+            uid = int(row["user_id"])
+            label = Database.resolve_visible_name(
+                uid, display_names, str(row.get("user_name") or "")
+            )
+            text += f"{idx}위 {label} ({row['count']}회)\n"
         text += "\n"
 
     if top_routines:
@@ -940,9 +954,15 @@ async def month_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     text = "📊 *지난 30일 루틴 통계*\n\n"
 
     if top_users:
+        uids = [int(r["user_id"]) for r in top_users]
+        display_names = await db.get_user_display_names(uids)
         text += "👤 *가장 많이 기록한 사람 TOP 5*\n"
         for idx, row in enumerate(top_users, start=1):
-            text += f"{idx}위 {row['user_name']} ({row['count']}회)\n"
+            uid = int(row["user_id"])
+            label = Database.resolve_visible_name(
+                uid, display_names, str(row.get("user_name") or "")
+            )
+            text += f"{idx}위 {label} ({row['count']}회)\n"
         text += "\n"
 
     if top_routines:
@@ -957,29 +977,39 @@ async def month_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """오늘 내가 입력한 루틴 내용 보여주기"""
     user = update.message.from_user
+    fallback = user.full_name or user.username or str(user.id)
+    dmap = await db.get_user_display_names([user.id])
+    shown = Database.resolve_visible_name(user.id, dmap, fallback)
+
     today_str = datetime.datetime.now(KST).strftime("%Y-%m-%d")
     routines = await db.get_user_routines(user.id, today_str)
 
     if not routines:
-        await update.message.reply_text("📭 오늘 기록된 루틴이 아직 없어요.")
+        await update.message.reply_text(f"📭 {shown}님, 오늘 기록된 루틴이 아직 없어요.")
         return
 
     contents = [(r.get("content") or "").strip() for r in routines if (r.get("content") or "").strip()]
     today_label = datetime.datetime.now(KST).strftime("%m/%d")
-    text = f"📋 오늘({today_label}) 내 루틴\n\n{', '.join(contents)}"
+    text = f"📋 {shown}님의 오늘({today_label}) 루틴\n\n{', '.join(contents)}"
     await update.message.reply_text(text)
 
 
 async def my_routine_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """내가 그동안 자주 사용하는 루틴 목록 TOP 5"""
     user = update.message.from_user
+    fallback = user.full_name or user.username or str(user.id)
+    dmap = await db.get_user_display_names([user.id])
+    shown = Database.resolve_visible_name(user.id, dmap, fallback)
+
     top = await db.get_user_top_routines(user.id, limit=5)
 
     if not top:
-        await update.message.reply_text("📭 아직 기록된 루틴이 없어요. 루틴을 입력하면 자주 쓰는 항목이 여기 나타나요.")
+        await update.message.reply_text(
+            f"📭 {shown}님, 아직 기록된 루틴이 없어요. 루틴을 입력하면 자주 쓰는 항목이 여기 나타나요."
+        )
         return
 
-    text = "📌 *자주 사용하는 루틴 TOP 5*\n\n"
+    text = f"📌 *{shown}님 자주 사용하는 루틴 TOP 5*\n\n"
     for i, row in enumerate(top, 1):
         text += f"{i}. {row['content']} ({row['count']}회)\n"
 
@@ -1018,7 +1048,10 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     contents = [(r.get("content") or "").strip() for r in routines if (r.get("content") or "").strip()]
     date_label = f"{date_str[5:7]}/{date_str[8:]}"
-    text = f"📋 {user.full_name}님의 {date_label} 루틴\n\n{', '.join(contents)}"
+    fallback = user.full_name or user.username or str(user.id)
+    dmap = await db.get_user_display_names([user.id])
+    shown = Database.resolve_visible_name(user.id, dmap, fallback)
+    text = f"📋 {shown}님의 {date_label} 루틴\n\n{', '.join(contents)}"
     await update.message.reply_text(text)
 
 

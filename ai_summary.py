@@ -12,21 +12,34 @@ MODEL_FALLBACK_LIST = [
 client = anthropic.AsyncAnthropic()
 
 
-async def generate_summary(routines: list[dict], date: str) -> str:
-    # 사람별로 그룹핑 (키/값 None 방지)
-    by_user: dict[str, dict] = defaultdict(lambda: {"morning": [], "evening": []})
+async def generate_summary(
+    routines: list[dict],
+    date: str,
+    display_names: dict[int, str] | None = None,
+) -> str:
+    display_names = display_names or {}
+    # 사람별로 그룹핑 (user_id 기준 — 동일인이 텔레그램 이름만 바꿔도 한 명으로 묶음)
+    by_user: dict[int, dict] = defaultdict(lambda: {"morning": [], "evening": [], "fallback": ""})
     for r in routines:
-        name = (r.get("user_name") or "").strip() or "이름 없음"
+        uid = int(r.get("user_id") or 0)
+        if not uid:
+            continue
+        fallback = (r.get("user_name") or "").strip() or "이름 없음"
+        if not (by_user[uid]["fallback"]):
+            by_user[uid]["fallback"] = fallback
         rtype = (r.get("routine_type") or "morning").strip() or "morning"
         content = (r.get("content") or "").strip()
-        by_user[name][rtype].append(content)
+        by_user[uid][rtype].append(content)
 
     # 프롬프트용 텍스트 구성 (오늘 루틴 하나로 통합, 저녁 없으면 제외)
     date_label = f"{date[:4]}년 {date[5:7]}월 {date[8:]}일"
     content_block = ""
-    for name, data in by_user.items():
+    for uid in sorted(by_user.keys()):
+        data = by_user[uid]
+        dn = (display_names.get(uid) or "").strip()
+        label = dn or (data.get("fallback") or "").strip() or "이름 없음"
         all_items = list(data["morning"]) + list(data["evening"])
-        content_block += f"### {name}\n"
+        content_block += f"### {label}\n"
         if all_items:
             content_block += "오늘 루틴: " + ", ".join(all_items) + "\n\n"
         else:
