@@ -25,9 +25,6 @@ logger = logging.getLogger(__name__)
 KST = pytz.timezone("Asia/Seoul")
 db = Database()
 
-# evening 알람은 "내일부터" 시작하도록, 최초 스케줄 실행 전 오늘/내일 기준을 제어함
-EVENING_ALARM_START_DATE: str | None = None
-
 # 출석체크 설정 (환경변수로 조절 가능)
 ATTENDANCE_MAX_PARTICIPANTS = int(os.environ.get("ATTENDANCE_MAX_PARTICIPANTS", "24"))
 # 정규 시작: 20:50, 허용 시작: 10분 일찍(20:40)
@@ -64,11 +61,7 @@ async def send_morning_alarm(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def send_evening_alarm(context: ContextTypes.DEFAULT_TYPE):
-    # "내일부터" 시작: 최초 실행일(today)은 스킵하고 다음날부터 동작
-    if EVENING_ALARM_START_DATE:
-        today = datetime.datetime.now(KST).strftime("%Y-%m-%d")
-        if today < EVENING_ALARM_START_DATE:
-            return
+    """매일 20:00(KST) 저녁 루틴 리마인드. 배포 당일도 스케줄 시각 이후면 정상 발송."""
     chat_id = os.environ["TELEGRAM_CHAT_ID"]
     today_label = datetime.datetime.now(KST).strftime("%m/%d")
     today_str = datetime.datetime.now(KST).strftime("%Y-%m-%d")
@@ -840,7 +833,7 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def send_daily_routine_list_followup(context: ContextTypes.DEFAULT_TYPE):
-    """밤 11시: 오늘까지 기록된 /list 메시지를 자동으로 단체방에 전송."""
+    """매일 23:30(KST): 오늘까지 기록된 루틴을 /list 와 같은 형식으로 단체방에 전송."""
     chat_id_raw = os.environ.get("TELEGRAM_CHAT_ID")
     if not chat_id_raw:
         return
@@ -1140,10 +1133,6 @@ def main():
     evening_time = datetime.time(hour=20, minute=0, tzinfo=KST)
     lunch_time = datetime.time(hour=12, minute=0, tzinfo=KST)
     routine_list_time = datetime.time(hour=23, minute=30, tzinfo=KST)
-
-    # evening 알람은 "내일부터" 시작하도록 첫 실행일 제어
-    global EVENING_ALARM_START_DATE
-    EVENING_ALARM_START_DATE = (datetime.datetime.now(KST).date() + datetime.timedelta(days=1)).strftime("%Y-%m-%d")
 
     app.job_queue.run_daily(send_morning_alarm, time=morning_time)
     app.job_queue.run_daily(send_evening_alarm, time=evening_time)
