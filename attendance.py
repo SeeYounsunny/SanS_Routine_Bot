@@ -16,6 +16,11 @@ ATTENDANCE_MAX_PARTICIPANTS = int(os.environ.get("ATTENDANCE_MAX_PARTICIPANTS", 
 ATTENDANCE_ALLOW_EARLY_MINUTES = int(os.environ.get("ATTENDANCE_ALLOW_EARLY_MINUTES", "10"))
 ATTENDANCE_START_TIME = datetime.time(hour=20, minute=50, tzinfo=KST)
 ATTENDANCE_END_TIME = datetime.time(hour=23, minute=0, tzinfo=KST)
+# 23시 세션 종료 시(정원 미달일 때만) 단톡에 보내는 안내 — 전체 문장을 한 번에 바꾸려면 환경변수 사용
+_DEFAULT_SESSION_END_CHAT = "출석 세션이 종료되었습니다.\n오늘도 수고하셨습니다!"
+ATTENDANCE_SESSION_END_MESSAGE = (
+    os.environ.get("ATTENDANCE_SESSION_END_MESSAGE", _DEFAULT_SESSION_END_CHAT) or _DEFAULT_SESSION_END_CHAT
+).strip()
 
 
 async def _delete_message_job(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -149,6 +154,77 @@ def register_attendance(
         )
         logger.info("Attendance session started | session_date=%s", session_date)
 
+    async def send_attendance_session_end(context: ContextTypes.DEFAULT_TYPE) -> None:
+        """매주 일요일 23:00 — 정원(기본 24명) 미달일 때만 현황에서 버튼 제거 + 종료·인사 메시지 발송."""
+        if datetime.datetime.now(KST).weekday() != 6:
+            return
+
+        chat_id_raw = os.environ.get("TELEGRAM_CHAT_ID")
+        if not chat_id_raw:
+            return
+        chat_id = int(chat_id_raw)
+
+        session_date = datetime.datetime.now(KST).strftime("%Y-%m-%d")
+        session = await db.attendance_get_session(session_date)
+        if not session:
+            return
+
+        status_message_id = session.get("status_message_id")
+        status_chat_id = session.get("status_message_chat_id")
+        if not status_message_id or not status_chat_id:
+            logger.warning("Attendance session end skipped | no status message | date=%s", session_date)
+            return
+
+        max_participants = int(session["max_participants"] or ATTENDANCE_MAX_PARTICIPANTS)
+        records = await db.attendance_get_records(session_date)
+        user_ids = [int(r["user_id"]) for r in records]
+        display_names = await db.get_user_display_names(user_ids)
+
+        display_lines: list[str] = []
+        for idx, r in enumerate(records, start=1):
+            uid = int(r["user_id"])
+            name = Database.resolve_visible_name(
+                uid, display_names, str(r.get("user_name") or "")
+            )
+            display_lines.append(f"{idx}. {name}")
+
+        checked = len(records)
+        if checked >= max_participants:
+            logger.info(
+                "Attendance session end skipped (정원 달성) | date=%s %s/%s",
+                session_date,
+                checked,
+                max_participants,
+            )
+            return
+
+        rate = _attendance_rate_percent(checked, max_participants)
+        body = _attendance_status_text(display_lines, rate)
+
+        try:
+            await context.bot.edit_message_text(
+                chat_id=int(status_chat_id),
+                message_id=int(status_message_id),
+                text=body,
+                reply_markup=None,
+            )
+            logger.info(
+                "Attendance session ended | date=%s checked=%s/%s",
+                session_date,
+                checked,
+                max_participants,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to finalize attendance message at session end | date=%s",
+                session_date,
+            )
+
+        try:
+            await context.bot.send_message(chat_id=chat_id, text=ATTENDANCE_SESSION_END_MESSAGE)
+        except Exception:
+            logger.exception("Failed to send attendance session end greeting | date=%s", session_date)
+
     async def attendance_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """출석 버튼 클릭 처리 (CallbackQuery)."""
         query = update.callback_query
@@ -279,8 +355,9 @@ def register_attendance(
     app.add_handler(CommandHandler("attendanceguide", attendance_help_command))
     app.add_handler(CallbackQueryHandler(attendance_callback, pattern=r"^attendance:"))
 
-    # 스케줄 등록: 매주 일요일 20:50
+    # 스케줄 등록: 매주 일요일 20:50 시작, 23:00 마감(버튼 제거·인사 메시지)
     app.job_queue.run_daily(send_attendance_start, time=ATTENDANCE_START_TIME)
+    app.job_queue.run_daily(send_attendance_session_end, time=ATTENDANCE_END_TIME)
 
 
 async def attendance_help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -299,7 +376,9 @@ async def attendance_help_command(update: Update, context: ContextTypes.DEFAULT_
         "ℹ️ 안내 메시지\n"
         "- 시간 외: `출석 시간이 아닙니다.`\n"
         "- 중복: `이미 출석 처리되었습니다.`\n"
-        "- 완료 후: 정원이 꽉 차면 버튼이 사라지고, 새 메시지로 `100% 출석 완료! 오늘도 수고하셨습니다!`가 전송됩니다."
+        "- 완료 후: 정원이 꽉 차면 버튼이 사라지고, 새 메시지로 `100% 출석 완료! 오늘도 수고하셨습니다!`가 전송됩니다.\n"
+        "- 23시 종료: 정원(예: 24명)이 안 찼을 때만 출석 현황에서 버튼이 사라지고, "
+        "`출석 세션이 종료되었습니다.` / `오늘도 수고하셨습니다!` 안내가 올라옵니다. (정원 달성 시에는 생략)"
     )
 
     await update.message.reply_text(help_text, parse_mode="Markdown")
