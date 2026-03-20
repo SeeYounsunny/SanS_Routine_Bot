@@ -427,6 +427,14 @@ def _dm_add_hint(context: ContextTypes.DEFAULT_TYPE) -> str:
     )
 
 
+def _dm_only_command_hint() -> str:
+    """개인 루틴 조회·삭제 등은 1:1에서만 (단체방에서 썼을 때 안내)."""
+    return (
+        "이 명령은 봇과 1:1 대화에서만 사용할 수 있어요.\n"
+        f"아래 링크에서 봇과 개인 대화를 연 뒤 다시 시도해 주세요.\n{_bot_tme_link()}"
+    )
+
+
 def _parse_date_input(date_input: str) -> str | None:
     """/add 뒤에 붙일 날짜 파싱 (YYYY-MM-DD / YYYY/MM/DD / YYYYMMDD 지원)."""
     s = (date_input or "").strip()
@@ -602,22 +610,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─────────────────────────────────────────
 
 HELP_TEXT = """
-📖 *루틴 기록 사용법 안내*
+📖 루틴 기록 사용법 안내
 
-*▶ 루틴 입력*
-• 루틴은 *봇과 1:1 대화*에서만 입력해 주세요.
-• *봇과 1:1* 채팅을 연 뒤 `/add` 또는 `/add YYYY-MM-DD` 를 입력하세요.
-• 어제 루틴이 있으면 번호 목록이 나옵니다. 기존 건은 *번호를 쉼표(,)*로 구분, 새로 넣을 건 *쉼표 뒤*에 적고, 그 메시지에 *답장*으로 보내면 됩니다. (예: 1,3,요가 10분)
+▶ 루틴 입력
+• 루틴은 봇과 1:1 대화에서만 입력해 주세요.
+• 봇과 1:1 채팅을 연 뒤 `/add` 또는 `/add YYYY-MM-DD` 를 입력하세요.
+• 어제 루틴이 있으면 번호 목록이 나옵니다. 기존 건은 번호를 쉼표(,)로 구분, 새로 넣을 건 쉼표 뒤에 적고, 그 메시지에 답장으로 보내면 됩니다. (예: 1,3,요가 10분)
 • 단체방에서는 아침 8시·저녁 8시 알림, 12시 점심 리마인드가 올라옵니다.
 
-*▶ 명령어*
+▶ 개인 전용 (봇과 1:1에서만)
+• `/today`, `/myroutine`, `/delete`, `/search` 는 단체방에서는 사용할 수 없고, 봇과 개인 대화에서만 동작합니다. (단체방에서 입력하면 1:1로 안내합니다.)
+• 위 명령도 `/add`, `/setname` 과 같이 설정된 단체방 멤버만 1:1에서 쓸 수 있습니다.
+
+▶ 명령어
 /add [YYYY-MM-DD] — 루틴 추가 (1:1에서, 날짜 지정 가능)
-/today — 오늘 내가 입력한 루틴 보기
-/myroutine — 내가 자주 쓰는 루틴 TOP 5
-/delete — 오늘 입력한 루틴 전부 삭제
-/search YYYY-MM-DD — 해당 날짜 내 루틴 조회
+/today — 오늘 내가 입력한 루틴 보기 (1:1에서만)
+/myroutine — 내가 자주 쓰는 루틴 TOP 5 (1:1에서만)
+/delete — 오늘 입력한 루틴 전부 삭제 (1:1에서만)
+/search YYYY-MM-DD — 해당 날짜 내 루틴 조회 (1:1에서만)
 /list [YYYY-MM-DD] — 해당 날짜 전체 루틴 목록 (이름별, 요약 없음)
-/setname 이름 — 목록·통계·요약·/today·/myroutine 등에 표시될 내 이름 설정 (1:1에서)
+/setname 이름 — 목록·통계·요약·/today·/myroutine 등에 표시될 내 이름 설정 (1:1에서만)
 /summary — 오늘 전체 루틴 AI 요약
 /weekstats — 지난 7일 통계
 /monthstats — 지난 30일 통계
@@ -721,7 +733,14 @@ async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """오늘 날짜 루틴만 전부 삭제"""
+    chat = update.effective_chat
+    if not chat or chat.type != "private":
+        await update.message.reply_text(_dm_only_command_hint())
+        return
     user = update.message.from_user
+    if not await _is_allowed_user(context, user.id):
+        await update.message.reply_text("이 봇은 SanS 1조 단체방 멤버만 루틴 입력이 가능해요.")
+        return
     today_str = datetime.datetime.now(KST).strftime("%Y-%m-%d")
     deleted = await db.delete_user_routines_for_date(user.id, today_str)
     if deleted > 0:
@@ -976,7 +995,14 @@ async def month_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """오늘 내가 입력한 루틴 내용 보여주기"""
+    chat = update.effective_chat
+    if not chat or chat.type != "private":
+        await update.message.reply_text(_dm_only_command_hint())
+        return
     user = update.message.from_user
+    if not await _is_allowed_user(context, user.id):
+        await update.message.reply_text("이 봇은 SanS 1조 단체방 멤버만 루틴 입력이 가능해요.")
+        return
     fallback = user.full_name or user.username or str(user.id)
     dmap = await db.get_user_display_names([user.id])
     shown = Database.resolve_visible_name(user.id, dmap, fallback)
@@ -996,7 +1022,14 @@ async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def my_routine_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """내가 그동안 자주 사용하는 루틴 목록 TOP 5"""
+    chat = update.effective_chat
+    if not chat or chat.type != "private":
+        await update.message.reply_text(_dm_only_command_hint())
+        return
     user = update.message.from_user
+    if not await _is_allowed_user(context, user.id):
+        await update.message.reply_text("이 봇은 SanS 1조 단체방 멤버만 루틴 입력이 가능해요.")
+        return
     fallback = user.full_name or user.username or str(user.id)
     dmap = await db.get_user_display_names([user.id])
     shown = Database.resolve_visible_name(user.id, dmap, fallback)
@@ -1032,6 +1065,14 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """해당 날짜의 내 루틴 조회. 사용법: /search YYYY-MM-DD"""
+    chat = update.effective_chat
+    if not chat or chat.type != "private":
+        await update.message.reply_text(_dm_only_command_hint())
+        return
+    user = update.message.from_user
+    if not await _is_allowed_user(context, user.id):
+        await update.message.reply_text("이 봇은 SanS 1조 단체방 멤버만 루틴 입력이 가능해요.")
+        return
     if not context.args or len(context.args) != 1:
         await update.message.reply_text("사용법: /search YYYY-MM-DD (예: /search 2025-03-15)")
         return
@@ -1041,7 +1082,6 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         await update.message.reply_text("날짜 형식이 올바르지 않아요. YYYY-MM-DD 로 입력해 주세요. (예: 2025-03-15)")
         return
-    user = update.message.from_user
     routines = await db.get_user_routines(user.id, date_str)
     if not routines:
         await update.message.reply_text(f"📭 {date_str}에 기록된 루틴이 없어요.")
