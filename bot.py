@@ -44,90 +44,52 @@ def _bot_tme_link() -> str:
 
 
 async def send_morning_alarm(context: ContextTypes.DEFAULT_TYPE):
+    """08:00(KST): 어제 루틴(/list 형식) + 오늘도 함께 기록하자는 안내 (답장 프롬프트는 오늘 날짜)."""
     chat_id = os.environ["TELEGRAM_CHAT_ID"]
-    today_label = datetime.datetime.now(KST).strftime("%m/%d")
-    today_str = datetime.datetime.now(KST).strftime("%Y-%m-%d")
+    now_kst = datetime.datetime.now(KST)
+    today_str = now_kst.strftime("%Y-%m-%d")
+    yesterday_str = (now_kst.date() - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+    yesterday_digest = await _format_group_routine_list_for_date(yesterday_str)
 
-    msg = await context.bot.send_message(
-        chat_id=chat_id,
-        text=(
-            f"🌅 오늘 루틴을 적어볼까요?\n\n"
-            f"{today_label} 오늘 하루에 실천하고 싶은/실천한 루틴을 자유롭게 적어주세요. 💪\n\n"
-            f"아래 링크 클릭해서 각자 루틴 입력해 주세요.\n{_bot_tme_link()}"
-        ),
+    text = (
+        "🌅 좋은 아침이에요!\n\n"
+        f"어제({_format_date_label(yesterday_str)}) 루틴 기록이에요.\n\n"
+        f"{yesterday_digest}\n\n"
+        "────────\n\n"
+        "오늘도 작은 루틴 하나씩, 함께 열심히 쌓아 가요! 💪\n"
+        "각자 페이스로 괜찮아요. 아래 링크에서 봇과 1:1로 연 뒤 /add 를 치고, "
+        "봇이 보낸 메시지에 답장으로 오늘 루틴을 적어 주세요.\n\n"
+        f"{_bot_tme_link()}"
     )
+    msg = await context.bot.send_message(chat_id=chat_id, text=text)
     await db.save_prompt_message(msg.message_id, "morning", today_str)
-    logger.info(f"Morning alarm sent | message_id={msg.message_id}")
+    logger.info(
+        "Morning alarm sent | message_id=%s yesterday=%s",
+        msg.message_id,
+        yesterday_str,
+    )
 
 
 async def send_evening_alarm(context: ContextTypes.DEFAULT_TYPE):
-    """매일 20:00(KST) 저녁 루틴 리마인드. 배포 당일도 스케줄 시각 이후면 정상 발송."""
+    """20:00(KST): 오늘까지 입력된 루틴(/list 형식) + 미입력·추가 입력 응원."""
     chat_id = os.environ["TELEGRAM_CHAT_ID"]
-    today_label = datetime.datetime.now(KST).strftime("%m/%d")
-    today_str = datetime.datetime.now(KST).strftime("%Y-%m-%d")
+    now_kst = datetime.datetime.now(KST)
+    today_label = now_kst.strftime("%m/%d")
+    today_str = now_kst.strftime("%Y-%m-%d")
+    today_digest = await _format_group_routine_list_for_date(today_str)
 
-    msg = await context.bot.send_message(
-        chat_id=chat_id,
-        text=(
-            f"🌙 오늘 루틴, 마무리해볼까요?\n\n"
-            f"{today_label} 아직 오늘 루틴을 적지 않았다면 지금 적어주세요. ✨\n\n"
-            f"아래 링크 클릭해서 각자 루틴 입력해 주세요.\n{_bot_tme_link()}"
-        ),
+    text = (
+        f"🌙 오늘({today_label}) 루틴, 함께 확인해요\n\n"
+        f"{today_digest}\n\n"
+        "────────\n\n"
+        "아직 오늘 기록이 없거나 더 적고 싶다면, 남은 시간 활용해서 실천하고 잊기 전에 남겨 주세요.\n"
+        "모두 응원하고 있어요! ✨\n\n"
+        "아래 링크에서 봇과 1:1로 연 뒤 /add 를 치고, 봇 메시지에 답장으로 입력해 주세요.\n\n"
+        f"{_bot_tme_link()}"
     )
+    msg = await context.bot.send_message(chat_id=chat_id, text=text)
     await db.save_prompt_message(msg.message_id, "evening", today_str)
     logger.info(f"Evening alarm sent | message_id={msg.message_id}")
-
-
-async def send_lunch_reminder(context: ContextTypes.DEFAULT_TYPE):
-    """점심시간 단체방 리마인드: 오늘 입력한 사람별 루틴 내용 한 번 공지"""
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
-    if not chat_id:
-        return
-    today_str = datetime.datetime.now(KST).strftime("%Y-%m-%d")
-    routines = await db.get_today_routines(today_str)
-
-    by_user: dict[int, dict[str, object]] = {}
-    for r in routines:
-        uid = int(r.get("user_id") or 0)
-        name = (r.get("user_name") or "").strip() or "이름 없음"
-        content = (r.get("content") or "").strip()
-        if uid not in by_user:
-            by_user[uid] = {"fallback_name": name, "contents": []}
-        if content:
-            (by_user[uid]["contents"]).append(content)  # type: ignore[union-attr]
-
-    if not by_user:
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=(
-                "☀️ 점심 리마인드\n\n"
-                "아직 오늘 루틴을 입력한 사람이 없어요.\n"
-                "봇과 1:1 대화에서 /add 를 입력해 주세요! 💪"
-            ),
-        )
-    else:
-        display_names = await db.get_user_display_names(list(by_user.keys()))
-        lines = []
-        items = []
-        for uid, data in by_user.items():
-            label = Database.resolve_visible_name(
-                uid, display_names, str(data.get("fallback_name") or "")
-            )
-            contents = list(data.get("contents") or [])
-            items.append((label, contents))
-        for name, contents in sorted(items, key=lambda x: x[0]):
-            lines.append(f"• [{name}] {', '.join(contents)}")
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=(
-                f"☀️ 점심 리마인드 — 오늘 입력한 루틴 (참여인원 {len(items)}명)\n\n"
-                + "\n".join(lines)
-                + "\n\n"
-                + "아직 입력 안 하신 분들은 지금 기록해주세요.\n"
-                + f"{_bot_tme_link()}"
-            ),
-        )
-    logger.info("Lunch reminder sent")
 
 
 async def _delete_message_job(context: ContextTypes.DEFAULT_TYPE):
@@ -459,6 +421,39 @@ def _format_date_label(date_str: str) -> str:
         return date_str
 
 
+async def _format_group_routine_list_for_date(date_str: str) -> str:
+    """단체방용: 해당 날짜 루틴을 /list 와 같은 형식으로 포맷."""
+    routines = await db.get_today_routines(date_str)
+    if not routines:
+        return f"📭 {_format_date_label(date_str)} 기록된 루틴이 없어요."
+
+    by_user: dict[int, dict[str, object]] = {}
+    for r in routines:
+        uid = int(r.get("user_id") or 0)
+        name = (r.get("user_name") or "").strip() or "이름없음"
+        content = (r.get("content") or "").strip()
+        if not content:
+            continue
+        if uid not in by_user:
+            by_user[uid] = {"fallback_name": name, "contents": []}
+        (by_user[uid]["contents"]).append(content)  # type: ignore[union-attr]
+
+    display_names = await db.get_user_display_names(list(by_user.keys()))
+    date_label = _format_date_label(date_str)
+    header = f"📋 {date_label} 루틴 기록 (참여인원 {len(by_user)}명)"
+
+    items: list[tuple[str, list[str]]] = []
+    for uid, data in by_user.items():
+        label = Database.resolve_visible_name(
+            uid, display_names, str(data.get("fallback_name") or "")
+        )
+        contents = list(data.get("contents") or [])
+        items.append((label, contents))
+
+    lines = [f"• [{name}] {', '.join(contents)}" for name, contents in sorted(items, key=lambda x: x[0])]
+    return header + "\n\n" + "\n".join(lines)
+
+
 def _get_allowed_group_chat_id() -> int | None:
     raw = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
     if not raw:
@@ -609,7 +604,7 @@ HELP_TEXT = """
 • 루틴은 봇과 1:1 대화에서만 입력해 주세요.
 • 봇과 1:1 채팅을 연 뒤 `/add` 또는 `/add YYYY-MM-DD` 를 입력하세요.
 • 어제 루틴이 있으면 번호 목록이 나옵니다. 기존 건은 번호를 쉼표(,)로 구분, 새로 넣을 건 쉼표 뒤에 적고, 그 메시지에 답장으로 보내면 됩니다. (예: 1,3,요가 10분)
-• 단체방에서는 아침 8시·저녁 8시 알림, 12시 점심 리마인드가 올라옵니다.
+• 단체방에서는 아침 8시(어제 루틴 + 오늘도 함께 기록하자 안내), 저녁 8시(오늘 입력 현황 + 응원) 알림이 올라옵니다.
 
 ▶ 개인 전용 (봇과 1:1에서만)
 • `/today`, `/myroutine`, `/delete`, `/search` 는 단체방에서는 사용할 수 없고, 봇과 개인 대화에서만 동작합니다. (단체방에서 입력하면 1:1로 안내합니다.)
@@ -635,7 +630,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 루틴 봇에 오신 걸 환영합니다!\n\n"
         "📌 사용법\n"
-        "• 매일 아침 8시·저녁 8시 알림이 단체방에 올라와요.\n"
+        "• 매일 아침 8시(어제 기록 + 오늘 응원)·저녁 8시(오늘 현황 + 응원) 알림이 단체방에 올라와요.\n"
         f"• 루틴 입력: 아래 링크 클릭해서 각자 입력해 주세요.\n{_bot_tme_link()}\n\n"
         "자세한 사용법은 루틴 기록 사용법 안내: /help 를 입력하세요. 😊",
     )
@@ -796,87 +791,8 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         target_date_str = parsed
 
-    routines = await db.get_today_routines(target_date_str)
-    if not routines:
-        await update.message.reply_text(f"📭 {_format_date_label(target_date_str)} 기록된 루틴이 없어요.")
-        return
-    by_user: dict[int, dict[str, object]] = {}
-    for r in routines:
-        uid = int(r.get("user_id") or 0)
-        name = (r.get("user_name") or "").strip() or "이름없음"
-        content = (r.get("content") or "").strip()
-        if not content:
-            continue
-        if uid not in by_user:
-            by_user[uid] = {"fallback_name": name, "contents": []}
-        (by_user[uid]["contents"]).append(content)  # type: ignore[union-attr]
-
-    display_names = await db.get_user_display_names(list(by_user.keys()))
-
-    date_label = _format_date_label(target_date_str)
-    header = f"📋 {date_label} 루틴 기록 (참여인원 {len(by_user)}명)"
-
-    lines: list[str] = []
-    items = []
-    for uid, data in by_user.items():
-        label = Database.resolve_visible_name(
-            uid, display_names, str(data.get("fallback_name") or "")
-        )
-        contents = list(data.get("contents") or [])
-        items.append((label, contents))
-
-    for i, (name, contents) in enumerate(sorted(items, key=lambda x: x[0]), start=1):
-        lines.append(f"• [{name}] {', '.join(contents)}")
-
-    text = header + "\n\n" + "\n".join(lines)
+    text = await _format_group_routine_list_for_date(target_date_str)
     await update.message.reply_text(text)
-
-
-async def send_daily_routine_list_followup(context: ContextTypes.DEFAULT_TYPE):
-    """매일 23:30(KST): 오늘까지 기록된 루틴을 /list 와 같은 형식으로 단체방에 전송."""
-    chat_id_raw = os.environ.get("TELEGRAM_CHAT_ID")
-    if not chat_id_raw:
-        return
-    chat_id = int(chat_id_raw)
-
-    target_date_str = datetime.datetime.now(KST).strftime("%Y-%m-%d")
-    routines = await db.get_today_routines(target_date_str)
-
-    if not routines:
-        base = f"📭 {_format_date_label(target_date_str)} 기록된 루틴이 없어요."
-    else:
-        by_user: dict[int, dict[str, object]] = {}
-        for r in routines:
-            uid = int(r.get("user_id") or 0)
-            name = (r.get("user_name") or "").strip() or "이름없음"
-            content = (r.get("content") or "").strip()
-            if not content:
-                continue
-            if uid not in by_user:
-                by_user[uid] = {"fallback_name": name, "contents": []}
-            (by_user[uid]["contents"]).append(content)  # type: ignore[union-attr]
-
-        display_names = await db.get_user_display_names(list(by_user.keys()))
-        date_label = _format_date_label(target_date_str)
-        header = f"📋 {date_label} 루틴 기록 (참여인원 {len(by_user)}명)"
-
-        items = []
-        for uid, data in by_user.items():
-            label = Database.resolve_visible_name(
-                uid, display_names, str(data.get("fallback_name") or "")
-            )
-            contents = list(data.get("contents") or [])
-            items.append((label, contents))
-
-        lines: list[str] = []
-        for _, (name, contents) in enumerate(sorted(items, key=lambda x: x[0]), start=1):
-            lines.append(f"• [{name}] {', '.join(contents)}")
-
-        base = header + "\n\n" + "\n".join(lines)
-
-    praise = "루틴 열심히 하신 것 정말 대단해요. 오늘도 수고하셨습니다. 굿나잇! 🌙"
-    await context.bot.send_message(chat_id=chat_id, text=base + "\n\n" + praise)
-    logger.info("Routine list followup sent | date=%s", target_date_str)
 
 
 async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1131,13 +1047,9 @@ def main():
     # 스케줄 등록 (KST 기준)
     morning_time = datetime.time(hour=8, minute=0, tzinfo=KST)
     evening_time = datetime.time(hour=20, minute=0, tzinfo=KST)
-    lunch_time = datetime.time(hour=12, minute=0, tzinfo=KST)
-    routine_list_time = datetime.time(hour=23, minute=30, tzinfo=KST)
 
     app.job_queue.run_daily(send_morning_alarm, time=morning_time)
     app.job_queue.run_daily(send_evening_alarm, time=evening_time)
-    app.job_queue.run_daily(send_lunch_reminder, time=lunch_time)
-    app.job_queue.run_daily(send_daily_routine_list_followup, time=routine_list_time)
     attendance.register_attendance(app, db, _is_allowed_user)
 
     logger.info("Bot started. Polling...")
