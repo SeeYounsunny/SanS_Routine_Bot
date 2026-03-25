@@ -829,3 +829,63 @@ class Database:
             ) as cur:
                 rows = await cur.fetchall()
                 return [dict(r) for r in rows]
+
+    async def get_top_attendance_users(
+        self, start_date: str, end_date: str, limit: int
+    ) -> list[dict]:
+        """기간(start_date~end_date) 동안 출석(일요 세션) 횟수가 많은 사용자 순위."""
+        if self.use_postgres:
+            conn = await asyncpg.connect(DATABASE_URL)
+            try:
+                rows = await conn.fetch(
+                    """
+                    SELECT
+                        ar.user_id,
+                        (
+                            SELECT ar2.user_name
+                            FROM attendance_records ar2
+                            WHERE ar2.user_id = ar.user_id
+                              AND ar2.session_date BETWEEN $1 AND $2
+                            ORDER BY ar2.session_date DESC
+                            LIMIT 1
+                        ) AS user_name,
+                        COUNT(*)::bigint AS count
+                    FROM attendance_records ar
+                    WHERE ar.session_date BETWEEN $1 AND $2
+                    GROUP BY ar.user_id
+                    ORDER BY count DESC
+                    LIMIT $3
+                    """,
+                    start_date,
+                    end_date,
+                    limit,
+                )
+                return [dict(r) for r in rows]
+            finally:
+                await conn.close()
+
+        async with aiosqlite.connect(DB_PATH) as conn:
+            conn.row_factory = aiosqlite.Row
+            async with conn.execute(
+                """
+                SELECT
+                    ar.user_id,
+                    (
+                        SELECT ar2.user_name
+                        FROM attendance_records ar2
+                        WHERE ar2.user_id = ar.user_id
+                          AND ar2.session_date BETWEEN ? AND ?
+                        ORDER BY ar2.session_date DESC
+                        LIMIT 1
+                    ) AS user_name,
+                    COUNT(*) AS count
+                FROM attendance_records ar
+                WHERE ar.session_date BETWEEN ? AND ?
+                GROUP BY ar.user_id
+                ORDER BY count DESC
+                LIMIT ?
+                """,
+                (start_date, end_date, start_date, end_date, limit),
+            ) as cur:
+                rows = await cur.fetchall()
+                return [dict(r) for r in rows]
