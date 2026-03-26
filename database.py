@@ -5,6 +5,24 @@ import asyncpg
 DB_PATH = os.environ.get("DB_PATH", "routines.db")
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
+# 실제 서비스 데이터 시작일(YYYY-MM-DD).
+# - 루틴 통계/입력은 3/16부터 유효 (그 이전은 테스트로 취급)
+# - 출석체크 통계는 3/23부터 유효 (그 이전은 테스트로 취급)
+ROUTINE_DATA_MIN_DATE = os.environ.get("ROUTINE_DATA_MIN_DATE", "2026-03-16")
+ATTENDANCE_DATA_MIN_DATE = os.environ.get("ATTENDANCE_DATA_MIN_DATE", "2026-03-23")
+
+
+def _is_before(date_str: str, min_date: str) -> bool:
+    return date_str < min_date
+
+
+def _effective_range_clamped(start_date: str, end_date: str, min_date: str) -> tuple[str, str] | None:
+    """집계/조회 구간을 min_date 이상으로 맞춤. 유효 구간이 없으면 None."""
+    start = max(start_date, min_date)
+    if start > end_date:
+        return None
+    return start, end_date
+
 
 class Database:
     def __init__(self):
@@ -224,6 +242,8 @@ class Database:
     # ── 출석체크 ──────────────────────────────────────────────
 
     async def attendance_get_session(self, session_date: str) -> dict | None:
+        if _is_before(session_date, ATTENDANCE_DATA_MIN_DATE):
+            return None
         if self.use_postgres:
             conn = await asyncpg.connect(DATABASE_URL)
             try:
@@ -254,6 +274,8 @@ class Database:
 
     async def attendance_create_session(self, session_date: str, max_participants: int) -> bool:
         """세션 생성. 이미 있으면 False 반환."""
+        if _is_before(session_date, ATTENDANCE_DATA_MIN_DATE):
+            return False
         if self.use_postgres:
             conn = await asyncpg.connect(DATABASE_URL)
             try:
@@ -288,6 +310,8 @@ class Database:
         chat_id: int,
         message_id: int,
     ) -> None:
+        if _is_before(session_date, ATTENDANCE_DATA_MIN_DATE):
+            return
         if self.use_postgres:
             conn = await asyncpg.connect(DATABASE_URL)
             try:
@@ -317,6 +341,8 @@ class Database:
             await conn.commit()
 
     async def attendance_get_count(self, session_date: str) -> int:
+        if _is_before(session_date, ATTENDANCE_DATA_MIN_DATE):
+            return 0
         if self.use_postgres:
             conn = await asyncpg.connect(DATABASE_URL)
             try:
@@ -337,6 +363,8 @@ class Database:
                 return int(row[0]) if row else 0
 
     async def attendance_get_records(self, session_date: str) -> list[dict]:
+        if _is_before(session_date, ATTENDANCE_DATA_MIN_DATE):
+            return []
         if self.use_postgres:
             conn = await asyncpg.connect(DATABASE_URL)
             try:
@@ -369,6 +397,8 @@ class Database:
 
     async def attendance_add_record(self, session_date: str, user_id: int, user_name: str) -> bool:
         """레코드 추가. 중복이면 False."""
+        if _is_before(session_date, ATTENDANCE_DATA_MIN_DATE):
+            return False
         if self.use_postgres:
             conn = await asyncpg.connect(DATABASE_URL)
             try:
@@ -570,6 +600,8 @@ class Database:
         routine_type: str,
         content: str,
     ):
+        if _is_before(date, ROUTINE_DATA_MIN_DATE):
+            return
         # 저장용: 앞뒤·연속 공백 정리. 비교용: 공백 전부 제거한 키 (기상 스트레칭 = 기상스트레칭)
         content = " ".join((content or "").split())
         content_key = "".join((content or "").split()).lower()
@@ -607,6 +639,8 @@ class Database:
             await conn.commit()
 
     async def get_today_routines(self, date: str) -> list[dict]:
+        if _is_before(date, ROUTINE_DATA_MIN_DATE):
+            return []
         if self.use_postgres:
             conn = await asyncpg.connect(DATABASE_URL)
             try:
@@ -632,6 +666,8 @@ class Database:
                 return [dict(r) for r in rows]
 
     async def get_user_routines(self, user_id: int, date: str) -> list[dict]:
+        if _is_before(date, ROUTINE_DATA_MIN_DATE):
+            return []
         if self.use_postgres:
             conn = await asyncpg.connect(DATABASE_URL)
             try:
@@ -663,8 +699,12 @@ class Database:
             conn = await asyncpg.connect(DATABASE_URL)
             try:
                 rows = await conn.fetch(
-                    "SELECT content FROM routines WHERE user_id = $1",
+                    """
+                    SELECT content FROM routines
+                    WHERE user_id = $1 AND date >= $2
+                    """,
                     user_id,
+                    ROUTINE_DATA_MIN_DATE,
                 )
                 return [r["content"] or "" for r in rows]
             finally:
@@ -672,8 +712,8 @@ class Database:
 
         async with aiosqlite.connect(DB_PATH) as conn:
             async with conn.execute(
-                "SELECT content FROM routines WHERE user_id = ?",
-                (user_id,),
+                "SELECT content FROM routines WHERE user_id = ? AND date >= ?",
+                (user_id, ROUTINE_DATA_MIN_DATE),
             ) as cur:
                 rows = await cur.fetchall()
                 return [r[0] or "" for r in rows]
@@ -694,8 +734,59 @@ class Database:
         sorted_keys = sorted(key_to_content.keys(), key=lambda k: -key_count[k])[:limit]
         return [{"content": key_to_content[k], "count": key_count[k]} for k in sorted_keys]
 
+    async def get_user_top_routines_in_range(
+        self, user_id: int, start_date: str, end_date: str, limit: int = 5
+    ) -> list[dict]:
+        """기간 [start_date, end_date] 내 루틴 content 빈도 집계 후 TOP limit (전체 기간 버전과 동일 규칙)."""
+        rng = _effective_range_clamped(start_date, end_date, ROUTINE_DATA_MIN_DATE)
+        if rng is None:
+            return []
+        start_date, end_date = rng
+
+        if self.use_postgres:
+            conn = await asyncpg.connect(DATABASE_URL)
+            try:
+                rows = await conn.fetch(
+                    """
+                    SELECT content FROM routines
+                    WHERE user_id = $1 AND date >= $2 AND date <= $3
+                    """,
+                    user_id,
+                    start_date,
+                    end_date,
+                )
+                contents = [r["content"] or "" for r in rows]
+            finally:
+                await conn.close()
+        else:
+            async with aiosqlite.connect(DB_PATH) as conn:
+                async with conn.execute(
+                    """
+                    SELECT content FROM routines
+                    WHERE user_id = ? AND date >= ? AND date <= ?
+                    """,
+                    (user_id, start_date, end_date),
+                ) as cur:
+                    rows = await cur.fetchall()
+                    contents = [r[0] or "" for r in rows]
+
+        key_to_content: dict[str, str] = {}
+        key_count: dict[str, int] = {}
+        for c in contents:
+            c = (c or "").strip()
+            key = "".join(c.split()).lower()
+            if not key:
+                continue
+            key_count[key] = key_count.get(key, 0) + 1
+            if key not in key_to_content:
+                key_to_content[key] = c
+        sorted_keys = sorted(key_to_content.keys(), key=lambda k: -key_count[k])[:limit]
+        return [{"content": key_to_content[k], "count": key_count[k]} for k in sorted_keys]
+
     async def delete_user_routines_for_date(self, user_id: int, date: str) -> int:
         """해당 유저의 해당 날짜 루틴 전부 삭제. 삭제된 행 수 반환."""
+        if _is_before(date, ROUTINE_DATA_MIN_DATE):
+            return 0
         if self.use_postgres:
             conn = await asyncpg.connect(DATABASE_URL)
             try:
@@ -736,6 +827,10 @@ class Database:
 
     async def get_top_users(self, start_date: str, end_date: str, limit: int) -> list[dict]:
         """기간(start_date~end_date) 동안 루틴을 가장 많이 기록한 사람 순위 (user_id 기준 집계)."""
+        rng = _effective_range_clamped(start_date, end_date, ROUTINE_DATA_MIN_DATE)
+        if rng is None:
+            return []
+        start_date, end_date = rng
         if self.use_postgres:
             conn = await asyncpg.connect(DATABASE_URL)
             try:
@@ -794,6 +889,10 @@ class Database:
 
     async def get_top_routines(self, start_date: str, end_date: str, limit: int) -> list[dict]:
         """기간 동안 가장 많이 기록된 루틴 내용 순위"""
+        rng = _effective_range_clamped(start_date, end_date, ROUTINE_DATA_MIN_DATE)
+        if rng is None:
+            return []
+        start_date, end_date = rng
         if self.use_postgres:
             conn = await asyncpg.connect(DATABASE_URL)
             try:
@@ -834,6 +933,10 @@ class Database:
         self, start_date: str, end_date: str, limit: int
     ) -> list[dict]:
         """기간(start_date~end_date) 동안 출석(일요 세션) 횟수가 많은 사용자 순위."""
+        rng = _effective_range_clamped(start_date, end_date, ATTENDANCE_DATA_MIN_DATE)
+        if rng is None:
+            return []
+        start_date, end_date = rng
         if self.use_postgres:
             conn = await asyncpg.connect(DATABASE_URL)
             try:

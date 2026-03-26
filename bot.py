@@ -12,7 +12,7 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
-from database import Database
+from database import ATTENDANCE_DATA_MIN_DATE, ROUTINE_DATA_MIN_DATE, Database
 import attendance
 from ai_summary import generate_summary
 
@@ -25,12 +25,15 @@ logger = logging.getLogger(__name__)
 KST = pytz.timezone("Asia/Seoul")
 db = Database()
 
-# 주간/월간 통계에 넣지 않을 테스트 데이터: 이 날짜 미만의 루틴·출석 기록은 집계에서 제외
-STATS_MIN_DATE = datetime.date(2026, 3, 23)
+# 통계 기준일
+# - 루틴 입력/집계: 3/16부터
+# - 출석체크 집계: 3/23부터
+ROUTINE_STATS_MIN_DATE = datetime.date.fromisoformat(ROUTINE_DATA_MIN_DATE)
+ATTENDANCE_STATS_MIN_DATE = datetime.date.fromisoformat(ATTENDANCE_DATA_MIN_DATE)
 
 
-def _stats_period_start(computed_start: datetime.date) -> datetime.date:
-    return max(computed_start, STATS_MIN_DATE)
+def _stats_period_start(computed_start: datetime.date, min_date: datetime.date) -> datetime.date:
+    return max(computed_start, min_date)
 
 # 출석체크 설정 (환경변수로 조절 가능)
 ATTENDANCE_MAX_PARTICIPANTS = int(os.environ.get("ATTENDANCE_MAX_PARTICIPANTS", "24"))
@@ -366,7 +369,7 @@ async def attendance_status_command(update: Update, context: ContextTypes.DEFAUL
 # ─────────────────────────────────────────
 
 def _parse_selection_reply(text: str, items: list[str]) -> list[str]:
-    """메시지에서 번호(어제 루틴 인덱스)와 새 텍스트를 파싱해 저장할 content 목록 반환."""
+    """메시지에서 번호(선택지 목록 인덱스)와 새 텍스트를 파싱해 저장할 content 목록 반환."""
     if not (text or text.strip()):
         return []
     parts = [p.strip() for p in (text or "").split(",") if p.strip()]
@@ -428,6 +431,21 @@ def _format_date_label(date_str: str) -> str:
         return date_str
 
 
+def _week_before_selection_range(save_date_str: str) -> tuple[str, str]:
+    """기록 대상일 save_date 직전 7일(포함): save_date-7 ~ save_date-1."""
+    d = datetime.datetime.strptime(save_date_str, "%Y-%m-%d").date()
+    end = d - datetime.timedelta(days=1)
+    start = d - datetime.timedelta(days=7)
+    return start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
+
+
+async def _add_selection_items_for_save_date(user_id: int, save_date_str: str) -> list[str]:
+    """최근 7일간 자주 쓴 루틴 표시용 문자열 목록 (최대 5개)."""
+    start, end = _week_before_selection_range(save_date_str)
+    top = await db.get_user_top_routines_in_range(user_id, start, end, limit=5)
+    return [row["content"] for row in top]
+
+
 async def _format_group_routine_list_for_date(date_str: str) -> str:
     """단체방용: 해당 날짜 루틴을 /list 와 같은 형식으로 포맷."""
     routines = await db.get_today_routines(date_str)
@@ -485,7 +503,7 @@ async def _is_allowed_user(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> 
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """알림에 답장하면 루틴 저장. 단체방에서는 저장하지 않고 1:1 유도. 개인채팅에서만 어제 루틴 선택·저장."""
+    """알림에 답장하면 루틴 저장. 단체방에서는 저장하지 않고 1:1 유도. 개인채팅에서만 최근7일 Top5 선택·저장."""
     msg = update.message
     if not msg or not msg.reply_to_message:
         return
@@ -494,7 +512,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = msg.from_user
     chat = update.effective_chat
     today_str = datetime.datetime.now(KST).strftime("%Y-%m-%d")
-    yesterday = (datetime.datetime.now(KST) - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
 
     # 단체방에서는 루틴 저장/선택 없이 1:1 유도만 (포맷팅 없이 일반 텍스트 전송)
     if chat and chat.type in ("group", "supergroup"):
@@ -512,7 +529,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _dmap = await db.get_user_display_names([user.id])
     name = Database.resolve_visible_name(user.id, _dmap, fallback_name)
 
-    # 1) 어제 루틴 선택용 메시지에 대한 답장인지 확인
+    # 1) 선택지(최근7일 Top5) 메시지에 대한 답장인지 확인
     sel = await db.get_selection_prompt(reply_to_id)
     if sel:
         save_date = sel.get("selection_date") or today_str
@@ -549,25 +566,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 과거에 저장된 prompt.date가 MM/DD 형태였을 가능성 대비
         save_date_obj = datetime.datetime.now(KST).date()
         save_date = today_str
-    yesterday_for_items = (save_date_obj - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
     date_label = _format_date_label(save_date)
 
-    # 3) 어제 루틴이 있으면 번호 선택 메시지 전송 후 대기
-    yesterday_routines = await db.get_user_routines(user.id, yesterday_for_items)
-    seen_keys = set()
-    items = []
-    for row in yesterday_routines:
-        c = (row.get("content") or "").strip()
-        key = "".join(c.split()).lower()
-        if key and key not in seen_keys:
-            seen_keys.add(key)
-            items.append(c)
+    # 3) 최근 7일간 자주 쓴 루틴 Top5가 있으면 번호 선택 메시지 전송 후 대기
+    items = await _add_selection_items_for_save_date(user.id, save_date)
 
     if items:
         lines = [f"{i}. {item}" for i, item in enumerate(items, 1)]
         list_text = "\n".join(lines)
         sent = await msg.reply_text(
-            f"📋 *어제 루틴에서 선택*\n\n"
+            f"📋 *최근 일주일 자주 쓴 루틴에서 선택*\n\n"
             f"{list_text}\n\n"
             f"기존 건 번호를 *쉼표(,)*로 구분해서 쓰고, 새로 추가할 게 있으면 쉼표 뒤에 적어주세요.\n"
             f"예: 1,3,요가 10분\n\n"
@@ -585,7 +593,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"Selection prompt sent | user={name}, items={len(items)}")
         return
 
-    # 4) 어제 루틴 없음 → 기존처럼 한 번에 저장
+    # 4) 최근 7일 기록이 없거나 Top5가 비면 → 한 번에 저장
     await db.save_routine(
         user_id=user.id,
         user_name=name,
@@ -610,7 +618,7 @@ HELP_TEXT = """
 ▶ 루틴 입력
 • 루틴은 봇과 1:1 대화에서만 입력해 주세요.
 • 봇과 1:1 채팅을 연 뒤 `/add` 또는 `/add YYYY-MM-DD` 를 입력하세요.
-• 어제 루틴이 있으면 번호 목록이 나옵니다. 기존 건은 번호를 쉼표(,)로 구분, 새로 넣을 건 쉼표 뒤에 적고, 그 메시지에 답장으로 보내면 됩니다. (예: 1,3,요가 10분)
+• 기록일 직전 7일간 자주 쓴 루틴이 있으면 상위 최대 5개가 번호 목록으로 나옵니다. 기존 건은 번호를 쉼표(,)로 구분, 새로 넣을 건 쉼표 뒤에 적고, 그 메시지에 답장으로 보내면 됩니다. (예: 1,3,요가 10분)
 • 단체방에서는 아침 8시(어제 루틴 + 오늘도 함께 기록하자 안내), 저녁 8시(오늘 입력 현황 + 응원) 알림이 올라옵니다.
 
 ▶ 개인 전용 (봇과 1:1에서만)
@@ -649,7 +657,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """오늘 루틴 추가: 단체방이면 1:1 유도, 개인채팅에서만 어제 루틴 선택(본인 것만) 또는 입력 프롬프트"""
+    """오늘 루틴 추가: 단체방이면 1:1 유도, 개인채팅에서 최근7일 Top5 선택 또는 입력 프롬프트"""
     chat = update.effective_chat
     user = update.message.from_user
     if not chat or not user:
@@ -676,19 +684,8 @@ async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target_date_str = parsed
     target_label = _format_date_label(target_date_str)
 
-    target_date_obj = datetime.datetime.strptime(target_date_str, "%Y-%m-%d").date()
-    yesterday = (target_date_obj - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
-
-    # 개인채팅: 해당 유저의 어제 루틴만 표시 (남의 루틴 아님)
-    yesterday_routines = await db.get_user_routines(user.id, yesterday)
-    seen_keys = set()
-    items = []
-    for row in yesterday_routines:
-        c = (row.get("content") or "").strip()
-        key = "".join(c.split()).lower()
-        if key and key not in seen_keys:
-            seen_keys.add(key)
-            items.append(c)
+    # 개인채팅: 기록일 직전 7일간 빈도 기준 Top5 (본인 데이터만)
+    items = await _add_selection_items_for_save_date(user.id, target_date_str)
 
     if items:
         lines = [f"{i}. {item}" for i, item in enumerate(items, 1)]
@@ -697,7 +694,7 @@ async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_id=chat.id,
             text=(
                 f"📝 *{target_label} 루틴 추가*\n\n"
-                f"어제 루틴:\n{list_text}\n\n"
+                f"최근 7일간 자주 쓴 루틴 (최대 5개):\n{list_text}\n\n"
                 f"기존 건 번호를 *쉼표(,)*로 구분해서 쓰고, 새로 추가할 게 있으면 쉼표 뒤에 적어주세요.\n"
                 f"예: 1,3,요가 10분\n\n"
                 f"👇 *이 메시지에 답장*으로 보내주세요."
@@ -838,13 +835,16 @@ async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def week_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """지난 7일간 통계"""
     today = datetime.datetime.now(KST).date()
-    start_date = _stats_period_start(today - datetime.timedelta(days=6))
-    start_str = start_date.strftime("%Y-%m-%d")
     end_str = today.strftime("%Y-%m-%d")
 
-    top_users = await db.get_top_users(start_str, end_str, limit=3)
-    top_routines = await db.get_top_routines(start_str, end_str, limit=3)
-    top_attendance = await db.get_top_attendance_users(start_str, end_str, limit=3)
+    start_date_routine = _stats_period_start(today - datetime.timedelta(days=6), ROUTINE_STATS_MIN_DATE)
+    start_date_attendance = _stats_period_start(today - datetime.timedelta(days=6), ATTENDANCE_STATS_MIN_DATE)
+    start_str_routine = start_date_routine.strftime("%Y-%m-%d")
+    start_str_attendance = start_date_attendance.strftime("%Y-%m-%d")
+
+    top_users = await db.get_top_users(start_str_routine, end_str, limit=3)
+    top_routines = await db.get_top_routines(start_str_routine, end_str, limit=3)
+    top_attendance = await db.get_top_attendance_users(start_str_attendance, end_str, limit=3)
 
     if not top_users and not top_routines and not top_attendance:
         await update.message.reply_text("📭 지난 7일 동안 집계할 루틴·출석 기록이 아직 없어요.")
@@ -888,13 +888,16 @@ async def week_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def month_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """지난 30일간 통계"""
     today = datetime.datetime.now(KST).date()
-    start_date = _stats_period_start(today - datetime.timedelta(days=29))
-    start_str = start_date.strftime("%Y-%m-%d")
     end_str = today.strftime("%Y-%m-%d")
 
-    top_users = await db.get_top_users(start_str, end_str, limit=5)
-    top_routines = await db.get_top_routines(start_str, end_str, limit=5)
-    top_attendance = await db.get_top_attendance_users(start_str, end_str, limit=5)
+    start_date_routine = _stats_period_start(today - datetime.timedelta(days=29), ROUTINE_STATS_MIN_DATE)
+    start_date_attendance = _stats_period_start(today - datetime.timedelta(days=29), ATTENDANCE_STATS_MIN_DATE)
+    start_str_routine = start_date_routine.strftime("%Y-%m-%d")
+    start_str_attendance = start_date_attendance.strftime("%Y-%m-%d")
+
+    top_users = await db.get_top_users(start_str_routine, end_str, limit=5)
+    top_routines = await db.get_top_routines(start_str_routine, end_str, limit=5)
+    top_attendance = await db.get_top_attendance_users(start_str_attendance, end_str, limit=5)
 
     if not top_users and not top_routines and not top_attendance:
         await update.message.reply_text("📭 지난 30일 동안 집계할 루틴·출석 기록이 아직 없어요.")
