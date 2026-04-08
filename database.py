@@ -992,3 +992,100 @@ class Database:
             ) as cur:
                 rows = await cur.fetchall()
                 return [dict(r) for r in rows]
+
+    async def get_attendance_perfect_users(self, start_date: str, end_date: str) -> list[dict]:
+        """기간 동안(세션 기준) 100% 출석한 사용자 목록.
+
+        - 분모: attendance_sessions에 존재하는 session_date 개수
+        - 분자: attendance_records에 해당 session_date에 출석한 횟수
+        """
+        rng = _effective_range_clamped(start_date, end_date, ATTENDANCE_DATA_MIN_DATE)
+        if rng is None:
+            return []
+        start_date, end_date = rng
+
+        if self.use_postgres:
+            conn = await asyncpg.connect(DATABASE_URL)
+            try:
+                total = await conn.fetchval(
+                    """
+                    SELECT COUNT(*)::bigint
+                    FROM attendance_sessions s
+                    WHERE s.session_date BETWEEN $1 AND $2
+                    """,
+                    start_date,
+                    end_date,
+                )
+                total = int(total or 0)
+                if total <= 0:
+                    return []
+
+                rows = await conn.fetch(
+                    """
+                    SELECT
+                        ar.user_id,
+                        (
+                            SELECT ar2.user_name
+                            FROM attendance_records ar2
+                            WHERE ar2.user_id = ar.user_id
+                              AND ar2.session_date BETWEEN $1 AND $2
+                            ORDER BY ar2.session_date DESC
+                            LIMIT 1
+                        ) AS user_name,
+                        COUNT(DISTINCT ar.session_date)::bigint AS count
+                    FROM attendance_records ar
+                    JOIN attendance_sessions s
+                      ON s.session_date = ar.session_date
+                    WHERE s.session_date BETWEEN $1 AND $2
+                    GROUP BY ar.user_id
+                    HAVING COUNT(DISTINCT ar.session_date) = $3
+                    ORDER BY ar.user_id ASC
+                    """,
+                    start_date,
+                    end_date,
+                    total,
+                )
+                return [dict(r) for r in rows]
+            finally:
+                await conn.close()
+
+        async with aiosqlite.connect(DB_PATH) as conn:
+            conn.row_factory = aiosqlite.Row
+            async with conn.execute(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM attendance_sessions s
+                WHERE s.session_date BETWEEN ? AND ?
+                """,
+                (start_date, end_date),
+            ) as cur:
+                row = await cur.fetchone()
+                total = int(row["cnt"] if row else 0)
+                if total <= 0:
+                    return []
+
+            async with conn.execute(
+                """
+                SELECT
+                    ar.user_id,
+                    (
+                        SELECT ar2.user_name
+                        FROM attendance_records ar2
+                        WHERE ar2.user_id = ar.user_id
+                          AND ar2.session_date BETWEEN ? AND ?
+                        ORDER BY ar2.session_date DESC
+                        LIMIT 1
+                    ) AS user_name,
+                    COUNT(DISTINCT ar.session_date) AS count
+                FROM attendance_records ar
+                JOIN attendance_sessions s
+                  ON s.session_date = ar.session_date
+                WHERE s.session_date BETWEEN ? AND ?
+                GROUP BY ar.user_id
+                HAVING COUNT(DISTINCT ar.session_date) = ?
+                ORDER BY ar.user_id ASC
+                """,
+                (start_date, end_date, start_date, end_date, total),
+            ) as cur:
+                rows = await cur.fetchall()
+                return [dict(r) for r in rows]

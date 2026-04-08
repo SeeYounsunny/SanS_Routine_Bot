@@ -636,6 +636,7 @@ HELP_TEXT = """
 /summary — 오늘 전체 루틴 AI 요약
 /weekstats — 지난 7일 통계
 /monthstats — 지난 30일 통계
+/attendanceperfect — 출석 100% 명단
 /chatid — 이 채팅방 ID 확인 (설정용)
 /help — 이 사용법 다시 보기
 """.strip()
@@ -833,77 +834,21 @@ async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def week_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """지난 7일간 통계"""
+    """지난 7일간 루틴 통계"""
     today = datetime.datetime.now(KST).date()
     end_str = today.strftime("%Y-%m-%d")
 
     start_date_routine = _stats_period_start(today - datetime.timedelta(days=6), ROUTINE_STATS_MIN_DATE)
-    start_date_attendance = _stats_period_start(today - datetime.timedelta(days=6), ATTENDANCE_STATS_MIN_DATE)
     start_str_routine = start_date_routine.strftime("%Y-%m-%d")
-    start_str_attendance = start_date_attendance.strftime("%Y-%m-%d")
-
-    top_users = await db.get_top_users(start_str_routine, end_str, limit=3)
-    top_routines = await db.get_top_routines(start_str_routine, end_str, limit=3)
-    top_attendance = await db.get_top_attendance_users(start_str_attendance, end_str, limit=3)
-
-    if not top_users and not top_routines and not top_attendance:
-        await update.message.reply_text("📭 지난 7일 동안 집계할 루틴·출석 기록이 아직 없어요.")
-        return
-
-    text = "📊 *지난 7일 통계*\n\n"
-
-    if top_users:
-        uids = [int(r["user_id"]) for r in top_users]
-        display_names = await db.get_user_display_names(uids)
-        text += "👤 *가장 많이 기록한 사람 TOP 3*\n"
-        for idx, row in enumerate(top_users, start=1):
-            uid = int(row["user_id"])
-            label = Database.resolve_visible_name(
-                uid, display_names, str(row.get("user_name") or "")
-            )
-            text += f"{idx}위 {label} ({row['count']}회)\n"
-        text += "\n"
-
-    if top_routines:
-        text += "✅ *가장 많이 기록된 루틴 TOP 3*\n"
-        for idx, row in enumerate(top_routines, start=1):
-            content = row["content"]
-            text += f"{idx}위 {content} ({row['count']}회)\n"
-        text += "\n"
-
-    if top_attendance:
-        uids = [int(r["user_id"]) for r in top_attendance]
-        display_names = await db.get_user_display_names(uids)
-        text += "📌 *출석 (일요 세션) TOP 3*\n"
-        for idx, row in enumerate(top_attendance, start=1):
-            uid = int(row["user_id"])
-            label = Database.resolve_visible_name(
-                uid, display_names, str(row.get("user_name") or "")
-            )
-            text += f"{idx}위 {label} ({row['count']}회)\n"
-
-    await update.message.reply_text(text.strip(), parse_mode="Markdown")
-
-
-async def month_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """지난 30일간 통계"""
-    today = datetime.datetime.now(KST).date()
-    end_str = today.strftime("%Y-%m-%d")
-
-    start_date_routine = _stats_period_start(today - datetime.timedelta(days=29), ROUTINE_STATS_MIN_DATE)
-    start_date_attendance = _stats_period_start(today - datetime.timedelta(days=29), ATTENDANCE_STATS_MIN_DATE)
-    start_str_routine = start_date_routine.strftime("%Y-%m-%d")
-    start_str_attendance = start_date_attendance.strftime("%Y-%m-%d")
 
     top_users = await db.get_top_users(start_str_routine, end_str, limit=5)
     top_routines = await db.get_top_routines(start_str_routine, end_str, limit=5)
-    top_attendance = await db.get_top_attendance_users(start_str_attendance, end_str, limit=5)
 
-    if not top_users and not top_routines and not top_attendance:
-        await update.message.reply_text("📭 지난 30일 동안 집계할 루틴·출석 기록이 아직 없어요.")
+    if not top_users and not top_routines:
+        await update.message.reply_text("📭 지난 7일 동안 집계할 루틴 기록이 아직 없어요.")
         return
 
-    text = "📊 *지난 30일 통계*\n\n"
+    text = "📊 *지난 7일 루틴 통계*\n\n"
 
     if top_users:
         uids = [int(r["user_id"]) for r in top_users]
@@ -924,17 +869,69 @@ async def month_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             text += f"{idx}위 {content} ({row['count']}회)\n"
         text += "\n"
 
-    if top_attendance:
-        uids = [int(r["user_id"]) for r in top_attendance]
+    await update.message.reply_text(text.strip(), parse_mode="Markdown")
+
+
+async def month_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """지난 30일간 루틴 통계"""
+    today = datetime.datetime.now(KST).date()
+    end_str = today.strftime("%Y-%m-%d")
+
+    start_date_routine = _stats_period_start(today - datetime.timedelta(days=29), ROUTINE_STATS_MIN_DATE)
+    start_str_routine = start_date_routine.strftime("%Y-%m-%d")
+
+    top_users = await db.get_top_users(start_str_routine, end_str, limit=10)
+    top_routines = await db.get_top_routines(start_str_routine, end_str, limit=10)
+
+    if not top_users and not top_routines:
+        await update.message.reply_text("📭 지난 30일 동안 집계할 루틴 기록이 아직 없어요.")
+        return
+
+    text = "📊 *지난 30일 루틴 통계*\n\n"
+
+    if top_users:
+        uids = [int(r["user_id"]) for r in top_users]
         display_names = await db.get_user_display_names(uids)
-        text += "📌 *출석 (일요 세션) TOP 5*\n"
-        for idx, row in enumerate(top_attendance, start=1):
+        text += "👤 *가장 많이 기록한 사람 TOP 10*\n"
+        for idx, row in enumerate(top_users, start=1):
             uid = int(row["user_id"])
             label = Database.resolve_visible_name(
                 uid, display_names, str(row.get("user_name") or "")
             )
             text += f"{idx}위 {label} ({row['count']}회)\n"
+        text += "\n"
 
+    if top_routines:
+        text += "✅ *가장 많이 기록된 루틴 TOP 10*\n"
+        for idx, row in enumerate(top_routines, start=1):
+            content = row["content"]
+            text += f"{idx}위 {content} ({row['count']}회)\n"
+        text += "\n"
+
+    await update.message.reply_text(text.strip(), parse_mode="Markdown")
+
+
+async def attendance_perfect_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """출석체크 통계: 지금까지 100% 출석한 사람 명단"""
+    today = datetime.datetime.now(KST).date()
+    end_str = today.strftime("%Y-%m-%d")
+    start_str = ATTENDANCE_STATS_MIN_DATE.strftime("%Y-%m-%d")
+
+    perfect = await db.get_attendance_perfect_users(start_str, end_str)
+    if not perfect:
+        await update.message.reply_text("📭 아직 100% 출석한 사람이 없어요.")
+        return
+
+    uids = [int(r["user_id"]) for r in perfect]
+    display_names = await db.get_user_display_names(uids)
+
+    names: list[str] = []
+    for row in perfect:
+        uid = int(row["user_id"])
+        label = Database.resolve_visible_name(uid, display_names, str(row.get("user_name") or ""))
+        names.append(label)
+
+    text = "🏅 *출석 100% 명단*\n\n" + "\n".join(f"- {n}" for n in names)
     await update.message.reply_text(text.strip(), parse_mode="Markdown")
 
 
@@ -1076,6 +1073,7 @@ def main():
     app.add_handler(CommandHandler("summary", summary_command))
     app.add_handler(CommandHandler("weekstats", week_stats_command))
     app.add_handler(CommandHandler("monthstats", month_stats_command))
+    app.add_handler(CommandHandler("attendanceperfect", attendance_perfect_command))
     app.add_handler(CommandHandler("today", today_command))
     app.add_handler(CommandHandler("myroutine", my_routine_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
