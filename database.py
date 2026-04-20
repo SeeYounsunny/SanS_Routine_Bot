@@ -826,7 +826,7 @@ class Database:
     # ── 집계용 통계 쿼리 ─────────────────────────────────────
 
     async def get_top_users(self, start_date: str, end_date: str, limit: int) -> list[dict]:
-        """기간(start_date~end_date) 동안 루틴을 가장 많이 기록한 사람 순위 (user_id 기준 집계)."""
+        """기간 내 '루틴을 1건 이상 적은 날' 수가 많은 사람 순위 (같은 날 여러 번 적어도 1일로 침)."""
         rng = _effective_range_clamped(start_date, end_date, ROUTINE_DATA_MIN_DATE)
         if rng is None:
             return []
@@ -846,7 +846,7 @@ class Database:
                             ORDER BY r2.date DESC, r2.id DESC
                             LIMIT 1
                         ) AS user_name,
-                        COUNT(*)::bigint AS count
+                        COUNT(DISTINCT r.date)::bigint AS count
                     FROM routines r
                     WHERE r.date BETWEEN $1 AND $2
                     GROUP BY r.user_id
@@ -875,7 +875,7 @@ class Database:
                         ORDER BY r2.date DESC, r2.id DESC
                         LIMIT 1
                     ) AS user_name,
-                    COUNT(*) AS count
+                    COUNT(DISTINCT r.date) AS count
                 FROM routines r
                 WHERE r.date BETWEEN ? AND ?
                 GROUP BY r.user_id
@@ -888,7 +888,7 @@ class Database:
                 return [dict(r) for r in rows]
 
     async def get_top_routines(self, start_date: str, end_date: str, limit: int) -> list[dict]:
-        """기간 동안 가장 많이 기록된 루틴 내용 순위"""
+        """기간 내 해당 루틴 문구가 적힌 '날' 수 순위 (같은 날 여러 번·여러 명이 적어도 그 날은 1일)."""
         rng = _effective_range_clamped(start_date, end_date, ROUTINE_DATA_MIN_DATE)
         if rng is None:
             return []
@@ -898,7 +898,7 @@ class Database:
             try:
                 rows = await conn.fetch(
                     """
-                    SELECT content, COUNT(*) AS count
+                    SELECT content, COUNT(DISTINCT date)::bigint AS count
                     FROM routines
                     WHERE date BETWEEN $1 AND $2
                     GROUP BY content
@@ -917,7 +917,7 @@ class Database:
             conn.row_factory = aiosqlite.Row
             async with conn.execute(
                 """
-                SELECT content, COUNT(*) AS count
+                SELECT content, COUNT(DISTINCT date) AS count
                 FROM routines
                 WHERE date BETWEEN ? AND ?
                 GROUP BY content

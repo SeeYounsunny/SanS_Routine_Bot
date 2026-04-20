@@ -55,51 +55,103 @@ def _bot_tme_link() -> str:
 
 async def send_morning_alarm(context: ContextTypes.DEFAULT_TYPE):
     """08:00(KST): 어제 루틴(/list 형식) + 오늘도 함께 기록하자는 안내 (답장 프롬프트는 오늘 날짜)."""
-    chat_id = os.environ["TELEGRAM_CHAT_ID"]
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    if not chat_id:
+        logger.warning("Group routine alarm skipped | kind=morning reason=TELEGRAM_CHAT_ID_missing")
+        return
     now_kst = datetime.datetime.now(KST)
     today_str = now_kst.strftime("%Y-%m-%d")
     yesterday_str = (now_kst.date() - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
-    yesterday_digest = await _format_group_routine_list_for_date(yesterday_str)
-
-    text = (
-        "🌅 좋은 아침이에요!\n\n"
-        f"어제({_format_date_label(yesterday_str)}) 루틴 기록이에요.\n\n"
-        f"{yesterday_digest}\n\n"
-        "────────\n\n"
-        "오늘도 작은 루틴 하나씩, 함께 열심히 쌓아 가요! 💪\n"
-        "각자 페이스로 괜찮아요. 아래 링크에서 봇과 1:1로 연 뒤 /add 를 치고, "
-        "봇이 보낸 메시지에 답장으로 오늘 루틴을 적어 주세요.\n\n"
-        f"{_bot_tme_link()}"
-    )
-    msg = await context.bot.send_message(chat_id=chat_id, text=text)
-    await db.save_prompt_message(msg.message_id, "morning", today_str)
     logger.info(
-        "Morning alarm sent | message_id=%s yesterday=%s",
-        msg.message_id,
-        yesterday_str,
+        "Group routine alarm job started | kind=morning kst=%s chat_id=%s today=%s",
+        now_kst.strftime("%Y-%m-%d %H:%M:%S"),
+        chat_id,
+        today_str,
     )
+    try:
+        yesterday_digest = await _format_group_routine_list_for_date(yesterday_str)
+
+        text = (
+            "🌅 좋은 아침이에요!\n\n"
+            f"어제({_format_date_label(yesterday_str)}) 루틴 기록이에요.\n\n"
+            f"{yesterday_digest}\n\n"
+            "────────\n\n"
+            "오늘도 작은 루틴 하나씩, 함께 열심히 쌓아 가요! 💪\n"
+            "각자 페이스로 괜찮아요. 아래 링크에서 봇과 1:1로 연 뒤 /add 를 치고, "
+            "봇이 보낸 메시지에 답장으로 오늘 루틴을 적어 주세요.\n\n"
+            f"{_bot_tme_link()}"
+        )
+        msg = await context.bot.send_message(chat_id=chat_id, text=text)
+        logger.info(
+            "Telegram send_message OK | kind=morning chat_id=%s message_id=%s api_date=%s",
+            chat_id,
+            msg.message_id,
+            getattr(msg, "date", None),
+        )
+        await db.save_prompt_message(msg.message_id, "morning", today_str)
+        logger.info(
+            "Group routine alarm completed OK | kind=morning chat_id=%s message_id=%s yesterday=%s prompt_saved=1",
+            chat_id,
+            msg.message_id,
+            yesterday_str,
+        )
+    except Exception:
+        logger.exception(
+            "Group routine alarm failed | kind=morning chat_id=%s today=%s",
+            chat_id,
+            today_str,
+        )
+        raise
 
 
 async def send_evening_alarm(context: ContextTypes.DEFAULT_TYPE):
     """20:00(KST): 오늘까지 입력된 루틴(/list 형식) + 미입력·추가 입력 응원."""
-    chat_id = os.environ["TELEGRAM_CHAT_ID"]
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    if not chat_id:
+        logger.warning("Group routine alarm skipped | kind=evening reason=TELEGRAM_CHAT_ID_missing")
+        return
     now_kst = datetime.datetime.now(KST)
     today_label = now_kst.strftime("%m/%d")
     today_str = now_kst.strftime("%Y-%m-%d")
-    today_digest = await _format_group_routine_list_for_date(today_str)
-
-    text = (
-        f"🌙 오늘({today_label}) 루틴, 함께 확인해요\n\n"
-        f"{today_digest}\n\n"
-        "────────\n\n"
-        "아직 오늘 기록이 없거나 더 적고 싶다면, 남은 시간 활용해서 실천하고 잊기 전에 남겨 주세요.\n"
-        "모두 응원하고 있어요! ✨\n\n"
-        "아래 링크에서 봇과 1:1로 연 뒤 /add 를 치고, 봇 메시지에 답장으로 입력해 주세요.\n\n"
-        f"{_bot_tme_link()}"
+    logger.info(
+        "Group routine alarm job started | kind=evening kst=%s chat_id=%s today=%s",
+        now_kst.strftime("%Y-%m-%d %H:%M:%S"),
+        chat_id,
+        today_str,
     )
-    msg = await context.bot.send_message(chat_id=chat_id, text=text)
-    await db.save_prompt_message(msg.message_id, "evening", today_str)
-    logger.info(f"Evening alarm sent | message_id={msg.message_id}")
+    try:
+        today_digest = await _format_group_routine_list_for_date(today_str)
+
+        text = (
+            f"🌙 오늘({today_label}) 루틴, 함께 확인해요\n\n"
+            f"{today_digest}\n\n"
+            "────────\n\n"
+            "아직 오늘 기록이 없거나 더 적고 싶다면, 남은 시간 활용해서 실천하고 잊기 전에 남겨 주세요.\n"
+            "모두 응원하고 있어요! ✨\n\n"
+            "아래 링크에서 봇과 1:1로 연 뒤 /add 를 치고, 봇 메시지에 답장으로 입력해 주세요.\n\n"
+            f"{_bot_tme_link()}"
+        )
+        msg = await context.bot.send_message(chat_id=chat_id, text=text)
+        logger.info(
+            "Telegram send_message OK | kind=evening chat_id=%s message_id=%s api_date=%s",
+            chat_id,
+            msg.message_id,
+            getattr(msg, "date", None),
+        )
+        await db.save_prompt_message(msg.message_id, "evening", today_str)
+        logger.info(
+            "Group routine alarm completed OK | kind=evening chat_id=%s message_id=%s today=%s prompt_saved=1",
+            chat_id,
+            msg.message_id,
+            today_str,
+        )
+    except Exception:
+        logger.exception(
+            "Group routine alarm failed | kind=evening chat_id=%s today=%s",
+            chat_id,
+            today_str,
+        )
+        raise
 
 
 async def _delete_message_job(context: ContextTypes.DEFAULT_TYPE):
@@ -634,8 +686,8 @@ HELP_TEXT = """
 /list [YYYY-MM-DD] — 해당 날짜 전체 루틴 목록 (이름별, 요약 없음)
 /setname 이름 — 목록·통계·요약·/today·/myroutine 등에 표시될 내 이름 설정 (1:1에서만)
 /summary — 오늘 전체 루틴 AI 요약
-/weekstats — 지난 7일 통계
-/monthstats — 지난 30일 통계
+/weekstats — 지난 7일 통계 (사람·루틴 모두 *기록한 날 수* 기준)
+/monthstats — 지난 30일 통계 (같은 기준)
 /attendanceperfect — 출석 100% 명단
 /chatid — 이 채팅방 ID 확인 (설정용)
 /help — 이 사용법 다시 보기
@@ -848,25 +900,25 @@ async def week_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("📭 지난 7일 동안 집계할 루틴 기록이 아직 없어요.")
         return
 
-    text = "📊 *지난 7일 루틴 통계*\n\n"
+    text = "📊 *지난 7일 루틴 통계* (기록 *일수* 기준)\n\n"
 
     if top_users:
         uids = [int(r["user_id"]) for r in top_users]
         display_names = await db.get_user_display_names(uids)
-        text += "👤 *가장 많이 기록한 사람 TOP 5*\n"
+        text += "👤 *기록한 날이 많은 사람 TOP 5*\n"
         for idx, row in enumerate(top_users, start=1):
             uid = int(row["user_id"])
             label = Database.resolve_visible_name(
                 uid, display_names, str(row.get("user_name") or "")
             )
-            text += f"{idx}위 {label} ({row['count']}회)\n"
+            text += f"{idx}위 {label} ({row['count']}일)\n"
         text += "\n"
 
     if top_routines:
-        text += "✅ *가장 많이 기록된 루틴 TOP 5*\n"
+        text += "✅ *여러 날에 나온 루틴 TOP 5*\n"
         for idx, row in enumerate(top_routines, start=1):
             content = row["content"]
-            text += f"{idx}위 {content} ({row['count']}회)\n"
+            text += f"{idx}위 {content} ({row['count']}일)\n"
         text += "\n"
 
     await update.message.reply_text(text.strip(), parse_mode="Markdown")
@@ -887,25 +939,25 @@ async def month_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("📭 지난 30일 동안 집계할 루틴 기록이 아직 없어요.")
         return
 
-    text = "📊 *지난 30일 루틴 통계*\n\n"
+    text = "📊 *지난 30일 루틴 통계* (기록 *일수* 기준)\n\n"
 
     if top_users:
         uids = [int(r["user_id"]) for r in top_users]
         display_names = await db.get_user_display_names(uids)
-        text += "👤 *가장 많이 기록한 사람 TOP 10*\n"
+        text += "👤 *기록한 날이 많은 사람 TOP 10*\n"
         for idx, row in enumerate(top_users, start=1):
             uid = int(row["user_id"])
             label = Database.resolve_visible_name(
                 uid, display_names, str(row.get("user_name") or "")
             )
-            text += f"{idx}위 {label} ({row['count']}회)\n"
+            text += f"{idx}위 {label} ({row['count']}일)\n"
         text += "\n"
 
     if top_routines:
-        text += "✅ *가장 많이 기록된 루틴 TOP 10*\n"
+        text += "✅ *여러 날에 나온 루틴 TOP 10*\n"
         for idx, row in enumerate(top_routines, start=1):
             content = row["content"]
-            text += f"{idx}위 {content} ({row['count']}회)\n"
+            text += f"{idx}위 {content} ({row['count']}일)\n"
         text += "\n"
 
     await update.message.reply_text(text.strip(), parse_mode="Markdown")
@@ -1084,6 +1136,9 @@ def main():
 
     app.job_queue.run_daily(send_morning_alarm, time=morning_time)
     app.job_queue.run_daily(send_evening_alarm, time=evening_time)
+    logger.info(
+        "Group routine alarms registered | morning=08:00 evening=20:00 (time tz=Asia/Seoul)"
+    )
     attendance.register_attendance(app, db, _is_allowed_user)
 
     logger.info("Bot started. Polling...")
