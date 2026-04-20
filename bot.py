@@ -680,7 +680,7 @@ HELP_TEXT = """
 ▶ 명령어
 /add [YYYY-MM-DD] — 루틴 추가 (1:1에서, 날짜 지정 가능)
 /today — 오늘 내가 입력한 루틴 보기 (1:1에서만)
-/myroutine — 내가 자주 쓰는 루틴 TOP 5 (1:1에서만)
+/myroutine — 기록 일수·미기록 날 + 자주 쓰는 루틴 TOP 5 (1:1에서만)
 /delete — 오늘 입력한 루틴 전부 삭제 (1:1에서만)
 /search YYYY-MM-DD — 해당 날짜 내 루틴 조회 (1:1에서만)
 /list [YYYY-MM-DD] — 해당 날짜 전체 루틴 목록 (이름별, 요약 없음)
@@ -1038,8 +1038,24 @@ async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text)
 
 
+def _routine_calendar_summary(recorded_dates: list[str], start_str: str, end_str: str) -> tuple[int, int, list[str]]:
+    """(기록한 날 수, 구간 전체 일 수, 미기록 YYYY-MM-DD 목록)."""
+    d0 = datetime.date.fromisoformat(start_str)
+    d1 = datetime.date.fromisoformat(end_str)
+    rec_set = set(recorded_dates)
+    missing: list[str] = []
+    d = d0
+    while d <= d1:
+        s = d.strftime("%Y-%m-%d")
+        if s not in rec_set:
+            missing.append(s)
+        d += datetime.timedelta(days=1)
+    total_days = (d1 - d0).days + 1
+    return len(rec_set), total_days, missing
+
+
 async def my_routine_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """내가 그동안 자주 사용하는 루틴 목록 TOP 5"""
+    """기록 일수·미기록 날 + 자주 사용 루틴 TOP 5"""
     chat = update.effective_chat
     if not chat or chat.type != "private":
         await update.message.reply_text(_dm_only_command_hint())
@@ -1052,17 +1068,46 @@ async def my_routine_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     dmap = await db.get_user_display_names([user.id])
     shown = Database.resolve_visible_name(user.id, dmap, fallback)
 
+    today = datetime.datetime.now(KST).date()
+    end_str = today.strftime("%Y-%m-%d")
+    start_str = ROUTINE_STATS_MIN_DATE.strftime("%Y-%m-%d")
+
+    recorded_dates = await db.get_user_distinct_routine_dates(user.id, start_str, end_str)
     top = await db.get_user_top_routines(user.id, limit=5)
 
-    if not top:
+    if not recorded_dates and not top:
         await update.message.reply_text(
             f"📭 {shown}님, 아직 기록된 루틴이 없어요. 루틴을 입력하면 자주 쓰는 항목이 여기 나타나요."
         )
         return
 
-    text = f"📌 *{shown}님 자주 사용하는 루틴 TOP 5*\n\n"
-    for i, row in enumerate(top, 1):
-        text += f"{i}. {row['content']} ({row['count']}회)\n"
+    rec_days, total_days, missing = _routine_calendar_summary(recorded_dates, start_str, end_str)
+
+    header_lines = [
+        f"📋 *{shown}님 루틴 기록 요약*",
+        f"📊 *기록 일수* (`{start_str}` ~ `{end_str}`, KST)",
+        f"· 기록한 날: *{rec_days}일* (전체 *{total_days}일* 중)",
+    ]
+    if missing:
+        cap = 45
+        labels = [_format_date_label(m) for m in missing[:cap]]
+        rest = len(missing) - cap
+        miss_text = ", ".join(labels)
+        if rest > 0:
+            miss_text += f" …(외 {rest}일)"
+        header_lines.append(f"· 미기록 *{len(missing)}일*: {miss_text}")
+    else:
+        header_lines.append("· 미기록 없음")
+
+    header = "\n".join(header_lines) + "\n\n"
+
+    if top:
+        body = "📌 *자주 사용하는 루틴 TOP 5* (누적 *회* 기준)\n\n"
+        for i, row in enumerate(top, 1):
+            body += f"{i}. {row['content']} ({row['count']}회)\n"
+        text = header + body
+    else:
+        text = header
 
     await update.message.reply_text(text.strip(), parse_mode="Markdown")
 

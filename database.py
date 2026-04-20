@@ -718,6 +718,43 @@ class Database:
                 rows = await cur.fetchall()
                 return [r[0] or "" for r in rows]
 
+    async def get_user_distinct_routine_dates(
+        self, user_id: int, start_date: str, end_date: str
+    ) -> list[str]:
+        """기간 내 해당 유저가 루틴을 1건 이상 적은 날짜(YYYY-MM-DD) 목록, 오름차순."""
+        rng = _effective_range_clamped(start_date, end_date, ROUTINE_DATA_MIN_DATE)
+        if rng is None:
+            return []
+        start_date, end_date = rng
+        if self.use_postgres:
+            conn = await asyncpg.connect(DATABASE_URL)
+            try:
+                rows = await conn.fetch(
+                    """
+                    SELECT DISTINCT date FROM routines
+                    WHERE user_id = $1 AND date BETWEEN $2 AND $3
+                    ORDER BY date ASC
+                    """,
+                    user_id,
+                    start_date,
+                    end_date,
+                )
+                return [str(r["date"]) for r in rows]
+            finally:
+                await conn.close()
+
+        async with aiosqlite.connect(DB_PATH) as conn:
+            async with conn.execute(
+                """
+                SELECT DISTINCT date FROM routines
+                WHERE user_id = ? AND date BETWEEN ? AND ?
+                ORDER BY date ASC
+                """,
+                (user_id, start_date, end_date),
+            ) as cur:
+                rows = await cur.fetchall()
+                return [str(r[0]) for r in rows]
+
     async def get_user_top_routines(self, user_id: int, limit: int = 5) -> list[dict]:
         """해당 유저가 자주 사용한 루틴 TOP N (공백 제거·소문자 통일 후 집계). 반환: [{"content": str, "count": int}, ...]"""
         contents = await self.get_user_all_contents(user_id)
