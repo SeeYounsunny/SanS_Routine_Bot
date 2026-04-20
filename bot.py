@@ -55,7 +55,10 @@ def _bot_tme_link() -> str:
 
 async def send_morning_alarm(context: ContextTypes.DEFAULT_TYPE):
     """08:00(KST): 어제 루틴(/list 형식) + 오늘도 함께 기록하자는 안내 (답장 프롬프트는 오늘 날짜)."""
-    chat_id = os.environ["TELEGRAM_CHAT_ID"]
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    if not chat_id:
+        logger.warning("send_morning_alarm: TELEGRAM_CHAT_ID is not set, skipping.")
+        return
     now_kst = datetime.datetime.now(KST)
     today_str = now_kst.strftime("%Y-%m-%d")
     yesterday_str = (now_kst.date() - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
@@ -1079,11 +1082,13 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     # 스케줄 등록 (KST 기준)
-    morning_time = datetime.time(hour=8, minute=0, tzinfo=KST)
-    evening_time = datetime.time(hour=20, minute=0, tzinfo=KST)
+    # datetime.time의 tzinfo에 pytz 존을 직접 넣으면 APScheduler가 UTC로 해석할 수 있으므로
+    # job_kwargs에 timezone을 명시해 KST(Asia/Seoul)로 확실히 고정한다.
+    morning_time = datetime.time(hour=8, minute=0)
+    evening_time = datetime.time(hour=20, minute=0)
 
-    app.job_queue.run_daily(send_morning_alarm, time=morning_time)
-    app.job_queue.run_daily(send_evening_alarm, time=evening_time)
+    app.job_queue.run_daily(send_morning_alarm, time=morning_time, job_kwargs={"timezone": KST})
+    app.job_queue.run_daily(send_evening_alarm, time=evening_time, job_kwargs={"timezone": KST})
     attendance.register_attendance(app, db, _is_allowed_user)
 
     logger.info("Bot started. Polling...")
