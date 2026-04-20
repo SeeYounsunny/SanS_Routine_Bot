@@ -993,15 +993,18 @@ class Database:
                 rows = await cur.fetchall()
                 return [dict(r) for r in rows]
 
-    async def get_attendance_perfect_users(self, start_date: str, end_date: str) -> list[dict]:
+    async def get_attendance_perfect_users(
+        self, start_date: str, end_date: str
+    ) -> tuple[str, str, int, list[dict]]:
         """기간 동안(세션 기준) 100% 출석한 사용자 목록.
 
+        반환: (집계 시작일, 집계 종료일, 이 기간의 출석 세션 수, 100% 달성 사용자 행 목록)
         - 분모: attendance_sessions에 존재하는 session_date 개수
-        - 분자: attendance_records에 해당 session_date에 출석한 횟수
+        - 분자: 각 user별 DISTINCT session_date 개수가 분모와 같은 경우
         """
         rng = _effective_range_clamped(start_date, end_date, ATTENDANCE_DATA_MIN_DATE)
         if rng is None:
-            return []
+            return start_date, end_date, 0, []
         start_date, end_date = rng
 
         if self.use_postgres:
@@ -1018,7 +1021,7 @@ class Database:
                 )
                 total = int(total or 0)
                 if total <= 0:
-                    return []
+                    return start_date, end_date, 0, []
 
                 rows = await conn.fetch(
                     """
@@ -1045,7 +1048,7 @@ class Database:
                     end_date,
                     total,
                 )
-                return [dict(r) for r in rows]
+                return start_date, end_date, total, [dict(r) for r in rows]
             finally:
                 await conn.close()
 
@@ -1062,7 +1065,7 @@ class Database:
                 row = await cur.fetchone()
                 total = int(row["cnt"] if row else 0)
                 if total <= 0:
-                    return []
+                    return start_date, end_date, 0, []
 
             async with conn.execute(
                 """
@@ -1088,4 +1091,4 @@ class Database:
                 (start_date, end_date, start_date, end_date, total),
             ) as cur:
                 rows = await cur.fetchall()
-                return [dict(r) for r in rows]
+                return start_date, end_date, total, [dict(r) for r in rows]

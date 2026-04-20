@@ -16,7 +16,7 @@
 | 📋 자주 쓴 루틴 번호 선택 | 1:1에서 `/add` 시, **기록일 직전 7일** 동안 자주 쓴 루틴 **상위 최대 5개**를 번호로 표시. 번호(쉼표 구분) + 새 루틴 답장 (예: `1,3,요가 10분`) |
 | 🤖 AI 요약 | `/summary` 로 오늘 전체 루틴을 Claude AI가 요약 |
 | 📊 주간/월간 루틴 통계 | `/weekstats`·`/monthstats` 는 **기록한 날 수** 기준(같은 날 여러 번 입력해도 그날은 1일). 최근 **7일** / **연속 30일** 롤링 구간, 사람·루틴 각각 TOP **5** / **10** |
-| 🏅 출석 100% | `/attendanceperfect` 로 세션 기준 전 출석자 명단 |
+| 🏅 출석 100% | `/attendanceperfect` — 집계 기간·세션 **N회** 조건을 헤드라인에 표시한 뒤 명단 |
 | 📖 사용법 안내 | `/help` (루틴), `/attendanceguide` (출석) |
 | 💾 영구 저장 | Railway PostgreSQL 사용 시 재배포해도 기록 유지 |
 
@@ -104,7 +104,7 @@ Railway → 봇 서비스 → **Variables** 탭에서 추가:
 | `/summary` | 오늘 전체 루틴 AI 요약 (ANTHROPIC_API_KEY 필요) |
 | `/weekstats` | 최근 **7일** 루틴 통계 — 사람·루틴 각 **기록 일수** TOP **5** |
 | `/monthstats` | 최근 **연속 30일**(달력 월과 무관) 루틴 통계 — 같은 기준, 각 TOP **10** |
-| `/attendanceperfect` | 출석 **100%** 명단 (세션마다 전부 참석한 사람) |
+| `/attendanceperfect` | 출석 **100%** 명단 — 메시지 상단에 **집계 기간**(기본 출석 통계 시작일~오늘)과 **세션 총 N회** 전원 참석 조건 표시 |
 | `/chatid` | 이 채팅방 ID 확인 (환경변수 설정용) |
 
 ---
@@ -117,6 +117,7 @@ Railway → 봇 서비스 → **Variables** 탭에서 추가:
 - 이름 표시는 `/setname` 설정을 우선해서 표시됩니다.
 - 안내/사용법: `/attendanceguide`
 - 관리자용 상태 확인: `/status`
+- `/attendanceperfect`: `ATTENDANCE_DATA_MIN_DATE`(기본 2026-03-23)부터 **오늘(KST)** 까지 `attendance_sessions`에 잡힌 일요 세션 수를 **N회**로 두고, 그 **N회를 모두 출석**한 사람만 명단에 올라갑니다.
 
 ## ⚠️ 참고 사항
 

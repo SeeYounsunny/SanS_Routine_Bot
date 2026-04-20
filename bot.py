@@ -688,7 +688,7 @@ HELP_TEXT = """
 /summary — 오늘 전체 루틴 AI 요약
 /weekstats — 지난 7일 통계 (사람·루틴 모두 *기록한 날 수* 기준)
 /monthstats — 지난 30일 통계 (같은 기준)
-/attendanceperfect — 출석 100% 명단
+/attendanceperfect — 출석 100% 명단 (집계 기간·세션 N회 조건 표시)
 /chatid — 이 채팅방 ID 확인 (설정용)
 /help — 이 사용법 다시 보기
 """.strip()
@@ -969,9 +969,33 @@ async def attendance_perfect_command(update: Update, context: ContextTypes.DEFAU
     end_str = today.strftime("%Y-%m-%d")
     start_str = ATTENDANCE_STATS_MIN_DATE.strftime("%Y-%m-%d")
 
-    perfect = await db.get_attendance_perfect_users(start_str, end_str)
+    agg_start, agg_end, total_sessions, perfect = await db.get_attendance_perfect_users(start_str, end_str)
+    start_l = _format_date_label(agg_start)
+    end_l = _format_date_label(agg_end)
+
+    period_line = (
+        f"📅 *집계 기간*: `{agg_start}` ~ `{agg_end}` ({start_l}~{end_l}, KST)\n"
+    )
+    condition_line = (
+        f"✅ *100% 조건*: 이 기간에 열린 출석 세션 *총 {total_sessions}회*를 *모두* 참석한 사람\n\n"
+    )
+    header = "🏅 *출석 100% 명단*\n" + period_line + condition_line
+
+    if total_sessions <= 0:
+        await update.message.reply_text(
+            "📭 출석 100% 명단을 만들 데이터가 없어요.\n\n"
+            + "🏅 *출석 100% 명단*\n"
+            + period_line
+            + "이 기간에 등록된 출석 세션이 아직 없어요.",
+            parse_mode="Markdown",
+        )
+        return
+
     if not perfect:
-        await update.message.reply_text("📭 아직 100% 출석한 사람이 없어요.")
+        await update.message.reply_text(
+            header + "📭 위 조건을 만족하는 분이 아직 없어요.",
+            parse_mode="Markdown",
+        )
         return
 
     uids = [int(r["user_id"]) for r in perfect]
@@ -983,7 +1007,7 @@ async def attendance_perfect_command(update: Update, context: ContextTypes.DEFAU
         label = Database.resolve_visible_name(uid, display_names, str(row.get("user_name") or ""))
         names.append(label)
 
-    text = "🏅 *출석 100% 명단*\n\n" + "\n".join(f"- {n}" for n in names)
+    text = header + "\n".join(f"- {n}" for n in names)
     await update.message.reply_text(text.strip(), parse_mode="Markdown")
 
 
