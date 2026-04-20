@@ -1007,7 +1007,7 @@ async def attendance_perfect_command(update: Update, context: ContextTypes.DEFAU
         label = Database.resolve_visible_name(uid, display_names, str(row.get("user_name") or ""))
         names.append(label)
 
-    text = header + "\n".join(f"- {n}" for n in names)
+    text = header + "\n".join(f"{i}. {n}" for i, n in enumerate(names, start=1))
     await update.message.reply_text(text.strip(), parse_mode="Markdown")
 
 
