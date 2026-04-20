@@ -1087,8 +1087,8 @@ def main():
     morning_time = datetime.time(hour=8, minute=0)
     evening_time = datetime.time(hour=20, minute=0)
 
-    app.job_queue.run_daily(send_morning_alarm, time=morning_time, job_kwargs={"timezone": KST})
-    app.job_queue.run_daily(send_evening_alarm, time=evening_time, job_kwargs={"timezone": KST})
+    app.job_queue.run_daily(send_morning_alarm, time=morning_time, tzinfo=KST)
+    app.job_queue.run_daily(send_evening_alarm, time=evening_time, tzinfo=KST)
     attendance.register_attendance(app, db, _is_allowed_user)
 
     logger.info("Bot started. Polling...")
