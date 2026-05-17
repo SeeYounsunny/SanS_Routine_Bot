@@ -427,6 +427,77 @@ class Database:
             await conn.commit()
             return cur.rowcount == 1
 
+    async def attendance_get_roster_from_latest_full_session(
+        self, max_participants: int
+    ) -> tuple[str | None, list[dict]]:
+        """가장 최근 '정원 전원 출석' 세션의 명단을 반환. (session_date, records)"""
+        min_date = ATTENDANCE_DATA_MIN_DATE
+        if self.use_postgres:
+            conn = await asyncpg.connect(DATABASE_URL)
+            try:
+                row = await conn.fetchrow(
+                    """
+                    SELECT ar.session_date
+                    FROM attendance_records ar
+                    INNER JOIN attendance_sessions s ON s.session_date = ar.session_date
+                    WHERE ar.session_date >= $1
+                      AND s.max_participants = $2
+                    GROUP BY ar.session_date, s.max_participants
+                    HAVING COUNT(DISTINCT ar.user_id) >= s.max_participants
+                    ORDER BY ar.session_date DESC
+                    LIMIT 1
+                    """,
+                    min_date,
+                    max_participants,
+                )
+                if not row:
+                    return None, []
+                session_date = row["session_date"]
+                rows = await conn.fetch(
+                    """
+                    SELECT user_id, user_name, checked_at
+                    FROM attendance_records
+                    WHERE session_date = $1
+                    ORDER BY checked_at ASC
+                    """,
+                    session_date,
+                )
+                return session_date, [dict(r) for r in rows]
+            finally:
+                await conn.close()
+
+        async with aiosqlite.connect(DB_PATH) as conn:
+            conn.row_factory = aiosqlite.Row
+            async with conn.execute(
+                """
+                SELECT ar.session_date
+                FROM attendance_records ar
+                INNER JOIN attendance_sessions s ON s.session_date = ar.session_date
+                WHERE ar.session_date >= ?
+                  AND s.max_participants = ?
+                GROUP BY ar.session_date, s.max_participants
+                HAVING COUNT(DISTINCT ar.user_id) >= s.max_participants
+                ORDER BY ar.session_date DESC
+                LIMIT 1
+                """,
+                (min_date, max_participants),
+            ) as cur:
+                row = await cur.fetchone()
+                if not row:
+                    return None, []
+                session_date = row["session_date"]
+            async with conn.execute(
+                """
+                SELECT user_id, user_name, checked_at
+                FROM attendance_records
+                WHERE session_date = ?
+                ORDER BY checked_at ASC
+                """,
+                (session_date,),
+            ) as cur:
+                rows = await cur.fetchall()
+                return session_date, [dict(r) for r in rows]
+
     async def save_prompt_message(self, message_id: int, prompt_type: str, date: str):
         if self.use_postgres:
             conn = await asyncpg.connect(DATABASE_URL)
