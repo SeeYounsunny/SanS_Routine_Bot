@@ -5,6 +5,7 @@ import logging
 import pytz
 from database import Database
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import Forbidden
 from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
 
 logger = logging.getLogger(__name__)
@@ -16,6 +17,7 @@ ATTENDANCE_MAX_PARTICIPANTS = int(os.environ.get("ATTENDANCE_MAX_PARTICIPANTS", 
 ATTENDANCE_ALLOW_EARLY_MINUTES = int(os.environ.get("ATTENDANCE_ALLOW_EARLY_MINUTES", "10"))
 ATTENDANCE_START_TIME = datetime.time(hour=20, minute=50, tzinfo=KST)
 ATTENDANCE_END_TIME = datetime.time(hour=23, minute=0, tzinfo=KST)
+ATTENDANCE_LEADER_REMINDER_TIME = datetime.time(hour=21, minute=30, tzinfo=KST)
 # 23시 세션 종료 시(정원 미달일 때만) 단톡에 보내는 안내 — 전체 문장을 한 번에 바꾸려면 환경변수 사용
 _DEFAULT_SESSION_END_CHAT = "출석 세션이 종료되었습니다.\n오늘도 수고하셨습니다!"
 ATTENDANCE_SESSION_END_MESSAGE = (
@@ -84,6 +86,22 @@ def _attendance_status_text(display_lines: list[str], rate_percent: int) -> str:
     if not display_lines:
         return header
     return header + "\n\n" + "\n".join(display_lines)
+
+
+def _parse_telegram_user_ids_env(env_key: str) -> list[int]:
+    """쉼표 구분 텔레그램 user_id 목록 (예: 123,456,-789)."""
+    raw = (os.environ.get(env_key) or "").strip()
+    if not raw:
+        return []
+    ids: list[int] = []
+    for part in raw.replace(" ", "").split(","):
+        if not part:
+            continue
+        try:
+            ids.append(int(part))
+        except ValueError:
+            continue
+    return ids
 
 
 def _attendance_keyboard(session_date: str) -> InlineKeyboardMarkup:
@@ -225,6 +243,138 @@ def register_attendance(
         except Exception:
             logger.exception("Failed to send attendance session end greeting | date=%s", session_date)
 
+    async def _send_absentee_attendance_dms(
+        context: ContextTypes.DEFAULT_TYPE, absent_ids: list[int], session_date: str
+    ) -> tuple[int, int]:
+        """미출석자에게 출석 독려 DM. (성공 수, 실패 수)"""
+        if not absent_ids:
+            return 0, 0
+        dm_text = (
+            "⏰ 출석체크 안내\n\n"
+            f"오늘({session_date}) 일요일 출석체크가 진행 중입니다.\n"
+            "아직 출석하지 않으셨다면, 단체방 출석 현황 메시지의 [출석] 버튼을 눌러 주세요.\n"
+            "(출석 가능: 21시 ~ 23시, KST)"
+        )
+        sent, failed = 0, 0
+        for uid in absent_ids:
+            try:
+                await context.bot.send_message(chat_id=uid, text=dm_text)
+                sent += 1
+                logger.info("Attendance absentee DM sent | user_id=%s date=%s", uid, session_date)
+            except Forbidden:
+                failed += 1
+                logger.info(
+                    "Attendance absentee DM skipped | user_id=%s (1:1 대화 미연결)",
+                    uid,
+                )
+            except Exception:
+                failed += 1
+                logger.exception("Attendance absentee DM failed | user_id=%s date=%s", uid, session_date)
+        return sent, failed
+
+    async def send_attendance_leader_reminder(context: ContextTypes.DEFAULT_TYPE) -> None:
+        """매주 일요일 21:30 — 미출석자 DM + 조장에게 미출석 명단 알림."""
+        if datetime.datetime.now(KST).weekday() != 6:
+            return
+
+        leader_raw = (os.environ.get("ATTENDANCE_LEADER_USER_ID") or "").strip()
+        if not leader_raw:
+            logger.warning("Attendance leader reminder skipped | ATTENDANCE_LEADER_USER_ID missing")
+            return
+
+        try:
+            leader_id = int(leader_raw)
+        except ValueError:
+            logger.warning("Attendance leader reminder skipped | invalid ATTENDANCE_LEADER_USER_ID")
+            return
+
+        session_date = datetime.datetime.now(KST).strftime("%Y-%m-%d")
+        session = await db.attendance_get_session(session_date)
+        if not session:
+            logger.info("Attendance leader reminder skipped | no session | date=%s", session_date)
+            return
+
+        max_participants = int(session["max_participants"] or ATTENDANCE_MAX_PARTICIPANTS)
+        records = await db.attendance_get_records(session_date)
+        checked_ids = {int(r["user_id"]) for r in records}
+
+        roster_source_date, roster_records = await db.attendance_get_roster_from_latest_full_session(
+            max_participants
+        )
+        roster_source_note = ""
+        if roster_records:
+            roster_ids = [int(r["user_id"]) for r in roster_records]
+            roster_source_note = f"\n(명단 기준: {roster_source_date} 전원 출석일)"
+        else:
+            roster_ids = _parse_telegram_user_ids_env("ATTENDANCE_ROSTER_USER_IDS")
+            if roster_ids:
+                roster_source_note = "\n(명단 기준: 환경변수 ATTENDANCE_ROSTER_USER_IDS)"
+
+        if not roster_ids:
+            logger.warning(
+                "Attendance leader reminder skipped | no roster "
+                "(no full session in DB and ATTENDANCE_ROSTER_USER_IDS empty)"
+            )
+            return
+
+        absent_ids = [uid for uid in roster_ids if uid not in checked_ids]
+
+        roster_name_by_id = {
+            int(r["user_id"]): str(r.get("user_name") or "") for r in roster_records
+        }
+        all_ids = sorted(set(roster_ids) | checked_ids)
+        display_names = await db.get_user_display_names(all_ids)
+
+        def _label(uid: int) -> str:
+            fallback = roster_name_by_id.get(uid, "")
+            for r in records:
+                if int(r["user_id"]) == uid:
+                    fallback = str(r.get("user_name") or "") or fallback
+                    break
+            return Database.resolve_visible_name(uid, display_names, fallback or str(uid))
+
+        checked = len(checked_ids & set(roster_ids))
+        roster_total = len(roster_ids)
+        date_label = session_date
+
+        dm_sent, dm_failed = await _send_absentee_attendance_dms(context, absent_ids, session_date)
+
+        if not absent_ids:
+            text = (
+                f"✅ 출석체크 알림 ({date_label})\n\n"
+                f"예정 {roster_total}명 전원 출석했습니다. ({checked}/{roster_total})"
+                f"{roster_source_note}"
+            )
+        else:
+            absent_lines = "\n".join(f"- {name}" for name in sorted(_label(uid) for uid in absent_ids))
+            dm_note = f"\n(미출석자 DM: 전송 {dm_sent}명"
+            if dm_failed:
+                dm_note += f", 미전송 {dm_failed}명"
+            dm_note += ")"
+            text = (
+                f"⏰ 출석체크 미출석 알림 ({date_label})\n\n"
+                f"현재 {checked}/{roster_total}명 출석 · 미출석 {len(absent_ids)}명"
+                f"{roster_source_note}{dm_note}\n\n"
+                f"{absent_lines}"
+            )
+
+        try:
+            await context.bot.send_message(chat_id=leader_id, text=text)
+            logger.info(
+                "Attendance leader reminder sent | date=%s leader_id=%s absent=%s dm_sent=%s dm_failed=%s",
+                session_date,
+                leader_id,
+                len(absent_ids),
+                dm_sent,
+                dm_failed,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to send attendance leader reminder | date=%s leader_id=%s",
+                session_date,
+                leader_id,
+            )
+
     async def attendance_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """출석 버튼 클릭 처리 (CallbackQuery)."""
         query = update.callback_query
@@ -355,8 +505,9 @@ def register_attendance(
     app.add_handler(CommandHandler("attendanceguide", attendance_help_command))
     app.add_handler(CallbackQueryHandler(attendance_callback, pattern=r"^attendance:"))
 
-    # 스케줄 등록: 매주 일요일 20:50 시작, 23:00 마감(버튼 제거·인사 메시지)
+    # 스케줄 등록: 매주 일요일 20:50 시작, 21:30 조장 알림, 23:00 마감
     app.job_queue.run_daily(send_attendance_start, time=ATTENDANCE_START_TIME)
+    app.job_queue.run_daily(send_attendance_leader_reminder, time=ATTENDANCE_LEADER_REMINDER_TIME)
     app.job_queue.run_daily(send_attendance_session_end, time=ATTENDANCE_END_TIME)
 
 
